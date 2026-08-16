@@ -1,0 +1,28 @@
+"""Workspace Module Configuration."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+__all__ = ["WorkspaceConfig"]
+
+
+@dataclass
+class WorkspaceConfig:
+    """Конфигурация модуля workspace.
+
+    Приоритет:
+    1. Прямые аргументы
+    2. Переменные окружения
+    """
+
+    # Лимиты по умолчанию
+    default_page_size: int = 50
+    max_page_size: int = 200
+
+    @classmethod
+    def from_env(cls) -> WorkspaceConfig:
+        return cls(
+            default_page_size=int(os.getenv("WORKSPACE_DEFAULT_PAGE_SIZE", "50")),
+            max_page_size=int(os.getenv("WORKSPACE_MAX_PAGE_SIZE", "200")),
+        )
