@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
   "files": {
-    "__init__.py": "da451d4ab11a7bf5c6e1c0f8c88ed37240f79d989c1a62ee84a1b7ddd45c8379",
+    "__init__.py": "8ad0c94dbb2554c59acdf5ad00e7b2d937f965ced8b37515bd14a8c220b06577",
     "config.py": "addee2b460365e9a045fd07cc486cc6d8baa1193278a31d7daf41b3d71b6c480",
-    "provider.py": "c605caa9416da00743e3087edcf9114cab7dc2bc1195ee34e2b204cfba4dcb49",
+    "provider.py": "391df144af433ea03e71adeaf0e84f3087c483a52a94fc018da7389682ec333c",
     "repository.py": "66a3a6e4f7fab0dcdf9facd8905f575a56008a8be0afa564fa08380141318e42",
     "schema.py": "8e214df708f6b43a2a6e4ffb15094fee1d76e2da345e07501b0cb5e80e62d018",
     "schemas.py": "98473781f3ac54297252b443e52c4ff5b63437bbbe6a926626534c5bea7f4e3c",
@@ -13,5 +13,5 @@
     "tests/test_repository.py": "c6f3911888811037f310bc9683262002caceb6a8d29dc5dcada93efb4afb9060",
     "tests/test_schema.py": "64289b8826561291f58759b1f822714f7bceedc446c56e24bec17fc2ab1949d0"
   },
-  "manifest_hash": "ca2bab531caff20c867869be225f29bd2d1efae1d217e7cfdaddcceb4cc17eff"
+  "manifest_hash": "2d8a57df24aec5c55cf0e990c4f5d310d0ec797fd7590ed9f4f50b9e8e2510b5"
 }

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules_system.module_base import ModuleBase
+from modules_system.module_base import ModuleBase, ModuleMeta
 
 from .config import WorkspaceConfig
 from .provider import WorkspaceProvider
@@ -50,6 +50,13 @@ class WorkspaceModule(ModuleBase):
     @property
     def version(self) -> str:
         return MODULE_VERSION
+
+    @property
+    def meta(self) -> ModuleMeta:
+        return ModuleMeta(
+            cache_rules={"get_workspace": 60, "get_session": 60},
+            timeout_defaults={"create_workspace": 10.0, "create_session": 10.0},
+        )
 
     def __init__(self, config: WorkspaceConfig | None = None) -> None:
         self._config = config or WorkspaceConfig.from_env()

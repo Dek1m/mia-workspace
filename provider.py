@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any
 
 from argenta_logging import get_logger
-from core.task_decorator import task
 from modules.auth.decorators import auth_method
 
 from .config import WorkspaceConfig
@@ -74,7 +73,6 @@ class WorkspaceProvider:
 
     # ── Workspaces ──────────────────────────────────────
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="create_workspace",
         description="Создать рабочее пространство",
@@ -92,7 +90,6 @@ class WorkspaceProvider:
     ) -> dict[str, Any]:
         return await self._repo.create_workspace(owner_id, name, description, settings)
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="get_workspace",
         description="Получить workspace по ID",
@@ -109,7 +106,6 @@ class WorkspaceProvider:
             raise ForbiddenError("Access denied")
         return ws
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="list_workspaces",
         description="Список workspace пользователя",
@@ -127,7 +123,6 @@ class WorkspaceProvider:
         items, total = await self._repo.list_workspaces(owner_id, offset, limit)
         return {"items": items, "total": total, "offset": offset, "limit": limit}
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="update_workspace",
         description="Обновить workspace",
@@ -149,7 +144,6 @@ class WorkspaceProvider:
             raise NotFoundError("Workspace")
         return result
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="delete_workspace",
         description="Удалить workspace",
@@ -166,7 +160,6 @@ class WorkspaceProvider:
             raise ForbiddenError("Only owner can delete workspace")
         return await self._repo.delete_workspace(workspace_id)
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="archive_workspace",
         description="Архивировать workspace",
@@ -188,7 +181,6 @@ class WorkspaceProvider:
 
     # ── Members ─────────────────────────────────────────
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="add_member",
         description="Добавить участника в workspace",
@@ -208,7 +200,6 @@ class WorkspaceProvider:
             raise ForbiddenError("Access denied")
         await self._repo.add_member(workspace_id, user_id, role)
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="remove_member",
         description="Удалить участника из workspace",
@@ -220,7 +211,6 @@ class WorkspaceProvider:
     async def remove_member(self, workspace_id: str, user_id: str) -> bool:
         return await self._repo.remove_member(workspace_id, user_id)
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="list_members",
         description="Список участников workspace",
@@ -234,7 +224,6 @@ class WorkspaceProvider:
 
     # ── Sessions ────────────────────────────────────────
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="create_session",
         description="Создать сессию в workspace",
@@ -259,7 +248,6 @@ class WorkspaceProvider:
             raise ForbiddenError("Access denied")
         return await self._repo.create_session(workspace_id, title, folder_id, agent_id, metadata)
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="list_sessions",
         description="Список сессий workspace",
@@ -274,7 +262,6 @@ class WorkspaceProvider:
         items, total = await self._repo.list_sessions(workspace_id, offset, limit)
         return {"items": items, "total": total, "offset": offset, "limit": limit}
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="get_session",
         description="Получить сессию по ID",
@@ -291,7 +278,6 @@ class WorkspaceProvider:
 
     # ── Messages ────────────────────────────────────────
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="add_message",
         description="Добавить сообщение в сессию",
@@ -310,7 +296,6 @@ class WorkspaceProvider:
     ) -> dict[str, Any]:
         return await self._repo.add_message(session_id, role, content, agent_id, metadata)
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="list_messages",
         description="Список сообщений сессии",
@@ -326,7 +311,6 @@ class WorkspaceProvider:
 
     # ── Consiliums ──────────────────────────────────────
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="create_consilium",
         description="Создать консилиум агентов",
@@ -343,7 +327,6 @@ class WorkspaceProvider:
     ) -> dict[str, Any]:
         return await self._repo.create_consilium(session_id, name, agent_ids)
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="get_consilium",
         description="Получить консилиум по ID",
@@ -358,7 +341,6 @@ class WorkspaceProvider:
             raise NotFoundError("Consilium")
         return consilium
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="list_consiliums",
         description="Список консилиумов сессии",
