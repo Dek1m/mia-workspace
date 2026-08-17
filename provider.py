@@ -41,10 +41,10 @@ class WorkspaceProvider:
     консилиумов и участников. Проверяет владение/членство.
     """
 
-    def __init__(self, config: WorkspaceConfig, pool: Any) -> None:
+    def __init__(self, config: WorkspaceConfig, database: Any) -> None:
         self._config = config
-        self._pool = pool
-        self._repo = WorkspaceRepository(pool)
+        self._database = database
+        self._repo = WorkspaceRepository(database)
 
     @property
     def repository(self) -> WorkspaceRepository:

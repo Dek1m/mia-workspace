@@ -70,10 +70,10 @@ class WorkspaceModule(ModuleBase):
         from modules.db.provider import DatabaseProvider
 
         db_provider = state.services.resolve(DatabaseProvider)
-        pool = db_provider.pool
+        database = db_provider
 
         # Создаём провайдер
-        self._provider = WorkspaceProvider(config=self._config, pool=pool)
+        self._provider = WorkspaceProvider(config=self._config, database=database)
 
         # Регистрация в DI
         state.services.register(WorkspaceProvider, self._provider)
