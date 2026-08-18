@@ -1,10 +1,10 @@
 {
   "version": "1.0.0",
   "files": {
-    "__init__.py": "8ad0c94dbb2554c59acdf5ad00e7b2d937f965ced8b37515bd14a8c220b06577",
+    "__init__.py": "9c52f101803645b38e92a6ee928e4dcb3240099137ac7a5cef4f05ac48cd27bc",
     "config.py": "addee2b460365e9a045fd07cc486cc6d8baa1193278a31d7daf41b3d71b6c480",
-    "provider.py": "391df144af433ea03e71adeaf0e84f3087c483a52a94fc018da7389682ec333c",
-    "repository.py": "66a3a6e4f7fab0dcdf9facd8905f575a56008a8be0afa564fa08380141318e42",
+    "provider.py": "4c88652ea9a0819e171670a9aeffff9f1aacfa345ab1768515b9a9a0dfd68bfa",
+    "repository.py": "d056087f506e2470b78ea201c54418aa6679e55890c96a1447554b7f443cbd7a",
     "schema.py": "8e214df708f6b43a2a6e4ffb15094fee1d76e2da345e07501b0cb5e80e62d018",
     "schemas.py": "98473781f3ac54297252b443e52c4ff5b63437bbbe6a926626534c5bea7f4e3c",
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -13,5 +13,5 @@
     "tests/test_repository.py": "c6f3911888811037f310bc9683262002caceb6a8d29dc5dcada93efb4afb9060",
     "tests/test_schema.py": "64289b8826561291f58759b1f822714f7bceedc446c56e24bec17fc2ab1949d0"
   },
-  "manifest_hash": "2d8a57df24aec5c55cf0e990c4f5d310d0ec797fd7590ed9f4f50b9e8e2510b5"
+  "manifest_hash": "77668f111cb5d99e3823eef8b8dc66354ac1531d5acf27821df4dcc84c5b9c60"
 }
