@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from argenta_logging import get_logger
+
 from modules.auth.decorators import auth_method
 
 from .config import WorkspaceConfig
@@ -11,7 +11,6 @@ from .repository import WorkspaceRepository
 from .schema import WORKSPACE_SCHEMA
 from .schemas import DB_SCHEMA
 
-log = get_logger(__name__)
 
 __all__ = ["WorkspaceProvider"]
 
@@ -41,9 +40,10 @@ class WorkspaceProvider:
     консилиумов и участников. Проверяет владение/членство.
     """
 
-    def __init__(self, config: WorkspaceConfig, database: Any) -> None:
+    def __init__(self, config: WorkspaceConfig, database: Any, log: Any = None) -> None:
         self._config = config
         self._database = database
+        self._log = log
         self._repo = WorkspaceRepository(database)
 
     @property
@@ -69,7 +69,7 @@ class WorkspaceProvider:
         auth_registry = state.services.resolve(AuthSchemaRegistry)
         await auth_registry.register("workspace", WORKSPACE_SCHEMA, is_builtin=False)
 
-        log.info("Workspace schema registered")
+        self._log.info("Workspace schema registered")
 
     # ── Workspaces ──────────────────────────────────────
 

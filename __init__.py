@@ -74,7 +74,7 @@ class WorkspaceModule(ModuleBase):
         database = db_provider
 
         # Создаём провайдер
-        self._provider = WorkspaceProvider(config=self._config, database=database)
+        self._provider = WorkspaceProvider(config=self._config, database=database, log=state.log)
 
         # Регистрация в DI
         state.services.register(WorkspaceProvider, self._provider)
