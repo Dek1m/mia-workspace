@@ -54,6 +54,7 @@ class WorkspaceModule(ModuleBase):
     @property
     def meta(self) -> ModuleMeta:
         return ModuleMeta(
+            dependencies=["log", "db"],
             cache_rules={"get_workspace": 60, "get_session": 60},
             timeout_defaults={"create_workspace": 10.0, "create_session": 10.0},
         )
