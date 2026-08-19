@@ -44,7 +44,7 @@ class WorkspaceProvider:
         self._config = config
         self._database = database
         self._log = log
-        self._repo = WorkspaceRepository(database)
+        self._repo = WorkspaceRepository(database, log=log)
 
     @property
     def repository(self) -> WorkspaceRepository:

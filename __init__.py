@@ -27,10 +27,6 @@ __all__ = [
     "WorkspaceConfig",
 ]
 
-from argenta_logging import get_logger
-
-log = get_logger(__name__)
-
 MODULE_VERSION = "1.0.0"
 
 
@@ -62,9 +58,11 @@ class WorkspaceModule(ModuleBase):
     def __init__(self, config: WorkspaceConfig | None = None) -> None:
         self._config = config or WorkspaceConfig.from_env()
         self._provider: WorkspaceProvider | None = None
+        self._log = None
 
     def on_load(self, state: Any) -> None:
         """Инициализация модуля: pool → repository → register_schema → register_auth_schema → провайдер."""
+        self._log = state.log
         import asyncio
 
         # Получаем пул БД из DatabaseProvider
@@ -74,7 +72,7 @@ class WorkspaceModule(ModuleBase):
         database = db_provider
 
         # Создаём провайдер
-        self._provider = WorkspaceProvider(config=self._config, database=database, log=state.log)
+        self._provider = WorkspaceProvider(config=self._config, database=database, log=self._log)
 
         # Регистрация в DI
         state.services.register(WorkspaceProvider, self._provider)
@@ -89,8 +87,9 @@ class WorkspaceModule(ModuleBase):
         else:
             loop.run_until_complete(_init_workspace())
 
-        log.info("WorkspaceModule loaded", version=self.version)
+        self._log.info("WorkspaceModule loaded", version=self.version)
 
     def on_unload(self) -> None:
         """Очистка ресурсов."""
-        log.info("WorkspaceModule unloaded")
+        self._log.info("WorkspaceModule unloaded")
+        self._log = None

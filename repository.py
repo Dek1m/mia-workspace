@@ -3,18 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from argenta_logging import get_logger
-
-log = get_logger(__name__)
-
 __all__ = ["WorkspaceRepository"]
 
 
 class WorkspaceRepository:
     """Репозиторий для CRUD workspace-таблиц."""
 
-    def __init__(self, database: Any) -> None:
+    def __init__(self, database: Any, log: Any | None = None) -> None:
         self._database = database
+        self._log = log
 
     # ── Workspaces ──────────────────────────────────────
 
