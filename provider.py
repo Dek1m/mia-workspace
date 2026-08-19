@@ -5,6 +5,7 @@ from typing import Any
 
 
 from modules.auth.decorators import auth_method
+from core.task_decorator import task
 
 from .config import WorkspaceConfig
 from .repository import WorkspaceRepository
@@ -50,6 +51,7 @@ class WorkspaceProvider:
     def repository(self) -> WorkspaceRepository:
         return self._repo
 
+    @task(type="database")
     async def initialize(self, state: Any) -> None:
         """Регистрация БД-схемы и AUTH_SCHEMA."""
         # Регистрация БД-схемы (идемпотентно)
@@ -81,6 +83,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:create",
     )
+    @task(type="database")
     async def create_workspace(
         self,
         owner_id: str,
@@ -98,6 +101,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:read",
     )
+    @task(type="database")
     async def get_workspace(self, workspace_id: str, user_id: str) -> dict[str, Any]:
         ws = await self._repo.get_workspace(workspace_id)
         if not ws:
@@ -114,6 +118,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:list",
     )
+    @task(type="database")
     async def list_workspaces(
         self,
         owner_id: str,
@@ -131,6 +136,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:update",
     )
+    @task(type="database")
     async def update_workspace(
         self, workspace_id: str, data: dict[str, Any], user_id: str,
     ) -> dict[str, Any]:
@@ -152,6 +158,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:delete",
     )
+    @task(type="database")
     async def delete_workspace(self, workspace_id: str, user_id: str) -> bool:
         ws = await self._repo.get_workspace(workspace_id)
         if not ws:
@@ -168,6 +175,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:update",
     )
+    @task(type="database")
     async def archive_workspace(self, workspace_id: str, user_id: str) -> dict[str, Any]:
         ws = await self._repo.get_workspace(workspace_id)
         if not ws:
@@ -189,6 +197,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:member_manage",
     )
+    @task(type="database")
     async def add_member(
         self, workspace_id: str, user_id: str, role: str = "viewer",
         operator_id: str | None = None,
@@ -208,6 +217,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:member_manage",
     )
+    @task(type="database")
     async def remove_member(self, workspace_id: str, user_id: str) -> bool:
         return await self._repo.remove_member(workspace_id, user_id)
 
@@ -219,6 +229,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:read",
     )
+    @task(type="database")
     async def list_members(self, workspace_id: str) -> list[dict[str, Any]]:
         return await self._repo.list_members(workspace_id)
 
@@ -232,6 +243,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_create",
     )
+    @task(type="database")
     async def create_session(
         self,
         workspace_id: str,
@@ -256,6 +268,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_read",
     )
+    @task(type="database")
     async def list_sessions(
         self, workspace_id: str, offset: int = 0, limit: int = 50,
     ) -> dict[str, Any]:
@@ -270,6 +283,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_read",
     )
+    @task(type="database")
     async def get_session(self, session_id: str) -> dict[str, Any]:
         session = await self._repo.get_session(session_id)
         if not session:
@@ -286,6 +300,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_create",
     )
+    @task(type="database")
     async def add_message(
         self,
         session_id: str,
@@ -304,6 +319,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_read",
     )
+    @task(type="database")
     async def list_messages(
         self, session_id: str, offset: int = 0, limit: int = 100,
     ) -> list[dict[str, Any]]:
@@ -319,6 +335,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_create",
     )
+    @task(type="database")
     async def create_consilium(
         self,
         session_id: str,
@@ -335,6 +352,7 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_read",
     )
+    @task(type="database")
     async def get_consilium(self, consilium_id: str) -> dict[str, Any]:
         consilium = await self._repo.get_consilium(consilium_id)
         if not consilium:
@@ -349,5 +367,6 @@ class WorkspaceProvider:
         public=False,
         required_permission="workspace:session_read",
     )
+    @task(type="database")
     async def list_consiliums(self, session_id: str) -> list[dict[str, Any]]:
         return await self._repo.list_consiliums(session_id)
