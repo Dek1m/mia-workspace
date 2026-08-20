@@ -183,6 +183,12 @@ class UserStore:
         except WorkspaceError:
             raise
         except Exception as exc:
+            from argenta_logging import get_logger
+
+            get_logger(__name__).error(
+                "workspace_query_failed",
+                extra={"dbname": self.dbname, "error_type": type(exc).__name__},
+            )
             raise WorkspaceError(str(exc), "DATABASE_ERROR") from exc
         if row is None:
             return None
