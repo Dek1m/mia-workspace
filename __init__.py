@@ -1,16 +1,10 @@
-"""Workspace Module — управление проектами для Mia Framework.
+"""Workspace Module — per-user PostgreSQL database + product workspaces.
 
-Предоставляет:
-- Управление рабочими пространствами (workspace CRUD)
-- Папки, сессии, сообщения, консилиумы
-- Участники workspace с ролями (owner/manager/viewer)
-- Интеграцию с auth (permissions) и LLM (консилиумы — Фаза 6)
-
-Использование:
-    app.load_module("workspace")
-
-    provider = app.services.resolve(WorkspaceProvider)
-    ws = await provider.create_workspace(owner_id="u1", name="My Project")
+Публичный контракт:
+    state.workspace(user=uuid|User, ws=uuid)        → Workspace
+    state.workspace(user=...).list()                → JSON список пространств
+    state.workspace(user=..., ws=...).sessions()    → JSON сессии
+    state.workspace(user=..., ws=...).sessions(sid) → JSON лента events
 """
 from __future__ import annotations
 
@@ -19,25 +13,29 @@ from typing import Any
 from modules_system.module_base import ModuleBase, ModuleMeta
 
 from .config import WorkspaceConfig
-from .provider import WorkspaceProvider
+from .facade import (
+    NotFoundError,
+    UserWorkspaces,
+    Workspace,
+    WorkspaceAccessor,
+    WorkspaceError,
+)
 
 __all__ = [
     "WorkspaceModule",
-    "WorkspaceProvider",
     "WorkspaceConfig",
+    "WorkspaceAccessor",
+    "UserWorkspaces",
+    "Workspace",
+    "WorkspaceError",
+    "NotFoundError",
 ]
 
-MODULE_VERSION = "1.0.0"
+MODULE_VERSION = "2.0.0"
 
 
 class WorkspaceModule(ModuleBase):
-    """Workspace-модуль для Mia Framework.
-
-    Предоставляет:
-    - Управление рабочими пространствами
-    - Папки, сессии, сообщения, консилиумы
-    - Участники с ролями
-    """
+    """Домен workspace: фасад на state, схема на named user-БД."""
 
     @property
     def name(self) -> str:
@@ -51,45 +49,42 @@ class WorkspaceModule(ModuleBase):
     def meta(self) -> ModuleMeta:
         return ModuleMeta(
             dependencies=["log", "db"],
-            cache_rules={"get_workspace": 60, "get_session": 60},
-            timeout_defaults={"create_workspace": 10.0, "create_session": 10.0},
+            cache_rules={},
+            timeout_defaults={},
         )
 
     def __init__(self, config: WorkspaceConfig | None = None) -> None:
         self._config = config or WorkspaceConfig.from_env()
-        self._provider: WorkspaceProvider | None = None
         self._log = None
 
     def on_load(self, state: Any) -> None:
-        """Инициализация модуля: pool → repository → register_schema → register_auth_schema → провайдер."""
+        """Вешает state.workspace. Схему user-БД накатывает фасад при первом заходе."""
         self._log = state.log
-        import asyncio
-
-        # Получаем пул БД из DatabaseProvider
         from modules.db.provider import DatabaseProvider
 
-        db_provider = state.services.resolve(DatabaseProvider)
-        database = db_provider
-
-        # Создаём провайдер
-        self._provider = WorkspaceProvider(config=self._config, database=database, log=self._log)
-
-        # Регистрация в DI
-        state.services.register(WorkspaceProvider, self._provider)
-
-        # Инициализация БД + AUTH_SCHEMA (идемпотентно)
-        async def _init_workspace() -> None:
-            await self._provider.initialize(state)
-
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_init_workspace())
-        else:
-            loop.run_until_complete(_init_workspace())
-
-        self._log.info("WorkspaceModule loaded", version=self.version)
+        database = state.services.resolve(DatabaseProvider)
+        state.workspace = WorkspaceAccessor(
+            database=database, log=self._log, config=self._config,
+        )
+        self._register_auth_schema(state)
+        self._log.info("WorkspaceModule loaded", extra={"version": self.version})
 
     def on_unload(self) -> None:
-        """Очистка ресурсов."""
-        self._log.info("WorkspaceModule unloaded")
+        if self._log is not None:
+            self._log.info("WorkspaceModule unloaded")
         self._log = None
+
+    def _register_auth_schema(self, state: Any) -> None:
+        """Permissions живут в auth. Нет — фасад всё равно работает."""
+        try:
+            from modules.auth.schema_registry import AuthSchemaRegistry
+            from .schema import WORKSPACE_SCHEMA
+
+            registry = state.services.resolve(AuthSchemaRegistry)
+            registry.register_sync("workspace", WORKSPACE_SCHEMA, is_builtin=False)
+        except Exception as exc:
+            if self._log is not None:
+                self._log.debug(
+                    "workspace auth schema skipped",
+                    extra={"error": str(exc)},
+                )
