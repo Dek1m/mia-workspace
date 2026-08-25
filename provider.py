@@ -7,7 +7,10 @@ from typing import Any
 
 from core.task_decorator import task
 
+from pathlib import Path
+
 from .facade import NotFoundError, WorkspaceAccessor, WorkspaceError
+from .fs import mkdir, safe_name, touch, trash_move
 from .homes import ensure_unix_home, list_home, unix_name
 
 __all__ = ["WorkspaceProvider"]
@@ -201,6 +204,34 @@ class WorkspaceProvider:
     @task(
         type="database",
         api=True,
+        name="create_home_path",
+        description="Создать папку или файл в ~/ на диске контейнера",
+        args={"name": "str", "parent_rel": "str", "kind": "str"},
+        return_type="dict",
+    )
+    def create_home_path(
+        self,
+        name: str,
+        parent_rel: str = "",
+        kind: str = "folder",
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if kind not in {"folder", "file"}:
+            raise WorkspaceError("invalid kind", "INVALID_NAME")
+        uid = self._user(_session_user_id)
+        home = Path(self._home(uid))
+        clean = safe_name(name)
+        parent = parent_rel.strip().lstrip("/")
+        rel = f"{parent}/{clean}" if parent else clean
+        if kind == "folder":
+            mkdir(home, rel)
+        else:
+            touch(home, rel)
+        return {"name": clean, "kind": kind, "rel_path": rel, "linked": False}
+
+    @task(
+        type="database",
+        api=True,
         name="link_home_path",
         description="Привязать путь из ~/ к workspace",
         args={"workspace_id": "str", "rel_path": "str"},
@@ -240,19 +271,21 @@ class WorkspaceProvider:
         api=True,
         name="trash_home_path",
         description="Перенести путь в ~/Trash/belle/ и отвязать от проекта",
-        args={"workspace_id": "str", "rel_path": "str"},
+        args={"rel_path": "str", "workspace_id": "str"},
         return_type="dict",
     )
     def trash_home_path(
         self,
-        workspace_id: str,
         rel_path: str,
+        workspace_id: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        self._home(uid)
-        ws = self._accessor(user=uid, ws=workspace_id)
-        return ws.trash_path(rel_path)
+        home = self._home(uid)
+        if workspace_id:
+            return self._accessor(user=uid, ws=workspace_id).trash_path(rel_path)
+        dest = trash_move(Path(home), rel_path)
+        return {"rel_path": rel_path, "trash_path": dest, "unlinked": 0}
 
     @task(
         type="database",
