@@ -326,16 +326,8 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        rel = rel_path.strip().lstrip("/")
         ws = self._ws(uid, workspace_id)
-        for parent in ws.linked_paths():
-            if rel == parent:
-                raise WorkspaceError("already in workspace", "ALREADY_LINKED")
-            if rel.startswith(f"{parent}/"):
-                raise WorkspaceError(
-                    f"already nested in {parent}", "ALREADY_NESTED",
-                )
-        return ws.link_path(rel, create_missing=False)
+        return ws.link_path(rel_path, create_missing=False)
 
     @task(
         type="database",

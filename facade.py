@@ -33,6 +33,8 @@ __all__ = [
     "Workspace",
     "WorkspaceError",
     "NotFoundError",
+    "linked_conflict",
+    "raise_linked_conflict",
 ]
 
 
@@ -47,6 +49,40 @@ class WorkspaceError(Exception):
 class NotFoundError(WorkspaceError):
     def __init__(self, entity: str = "Resource") -> None:
         super().__init__(f"{entity} not found", "NOT_FOUND")
+
+
+def _norm_rel(rel: str) -> str:
+    return rel.strip().lstrip("/").rstrip("/")
+
+
+def linked_conflict(rel: str, linked: Any) -> tuple[str, str] | None:
+    """Пересечение с уже прилинкованными корнями: сам, потомок, предок."""
+    path = _norm_rel(rel)
+    if not path:
+        return None
+    for raw in linked:
+        other = _norm_rel(str(raw))
+        if not other:
+            continue
+        if path == other:
+            return ("ALREADY_LINKED", other)
+        if path.startswith(f"{other}/"):
+            return ("ALREADY_NESTED", other)
+        if other.startswith(f"{path}/"):
+            return ("CONTAINS_LINKED", other)
+    return None
+
+
+def raise_linked_conflict(rel: str, linked: Any) -> None:
+    hit = linked_conflict(rel, linked)
+    if hit is None:
+        return
+    code, other = hit
+    if code == "ALREADY_LINKED":
+        raise WorkspaceError("already in workspace", code)
+    if code == "ALREADY_NESTED":
+        raise WorkspaceError(f"already nested in {other}", code)
+    raise WorkspaceError(f"already contains linked {other}", code)
 
 
 def _user_id(user: str | Any) -> str:
@@ -446,10 +482,14 @@ class UserWorkspaces:
         if isinstance(updated, dict):
             row = updated
         ws = Workspace(self._store, ws_id, self._config, self._log)
+        clean: list[str] = []
         for folder in folders or []:
-            rel = str(folder).strip().lstrip("/")
+            rel = _norm_rel(str(folder))
             if not rel:
                 continue
+            raise_linked_conflict(rel, clean)
+            clean.append(rel)
+        for rel in clean:
             ws.link_path(rel, create_missing=True)
         _info(
             self._log, "workspace created",
@@ -543,9 +583,10 @@ class Workspace:
 
     def link_path(self, rel: str, create_missing: bool = False) -> dict[str, Any]:
         """Привязать существующий путь под root (~/) к дереву workspace."""
-        rel = rel.strip().lstrip("/")
+        rel = _norm_rel(rel)
         if not rel or ".." in rel:
             raise WorkspaceError("invalid path", "INVALID_NAME")
+        raise_linked_conflict(rel, self.linked_paths())
         root = self.disk_root()
         ensure_dir(root)
         path = join_rel(root, rel)
