@@ -239,7 +239,7 @@ class WorkspaceProvider:
         type="database",
         api=True,
         name="trash_home_path",
-        description="Перенести путь в ~/Trash/albedo/ и отвязать от проекта",
+        description="Перенести путь в ~/Trash/belle/ и отвязать от проекта",
         args={"workspace_id": "str", "rel_path": "str"},
         return_type="dict",
     )
@@ -293,7 +293,7 @@ class WorkspaceProvider:
         type="database",
         api=True,
         name="trash_node",
-        description="Перенести ноду в ~/Trash/albedo/ и отвязать",
+        description="Перенести ноду в ~/Trash/belle/ и отвязать",
         args={"workspace_id": "str", "node_id": "str"},
         return_type="dict",
     )

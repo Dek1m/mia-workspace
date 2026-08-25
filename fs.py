@@ -83,7 +83,7 @@ def remove(root: Path, rel: str) -> None:
 
 
 def trash_move(home: Path, rel: str) -> str:
-    """Перенести путь в ~/Trash/albedo/{utc}/{rel}. Не rm."""
+    """Перенести путь в ~/Trash/belle/{utc}/{rel}. Не rm."""
     rel = rel.strip().lstrip("/")
     if not rel or rel in {".", ".."} or rel.startswith("Trash/") or ".." in rel:
         raise FsError("cannot trash this path", "INVALID_NAME")
@@ -91,7 +91,7 @@ def trash_move(home: Path, rel: str) -> str:
     if not src.exists():
         raise FsError("not found", "NOT_FOUND")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    dest = (home.resolve() / "Trash" / "albedo" / stamp / rel).resolve()
+    dest = (home.resolve() / "Trash" / "belle" / stamp / rel).resolve()
     try:
         dest.relative_to(home.resolve())
     except ValueError as exc:

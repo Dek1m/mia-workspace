@@ -556,7 +556,7 @@ class Workspace:
         return self.trash_path(rel)
 
     def trash_path(self, rel: str) -> dict[str, Any]:
-        """Перенести в ~/Trash/albedo/ и отвязать все ноды под этим путём."""
+        """Перенести в ~/Trash/belle/ и отвязать все ноды под этим путём."""
         rel = rel.strip().lstrip("/")
         root = self.disk_root()
         try:
