@@ -9,6 +9,7 @@ import json
 import threading
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .config import WorkspaceConfig
@@ -16,10 +17,12 @@ from .fs import (
     FsError,
     ensure_dir,
     folder_stats,
+    join_rel,
     mkdir,
     remove,
     safe_name,
     touch,
+    trash_move,
     workspace_dir,
 )
 from .schemas import DB_SCHEMA, TEMPLATE_DATABASE, user_dbname, uuid_hex
@@ -241,6 +244,17 @@ class UserStore:
     def get_node(self, node_id: uuid.UUID) -> dict[str, Any] | None:
         return self._fetch("SELECT workspace.get_node(%s)", (node_id,))
 
+    def get_node_by_path(
+        self, workspace_id: uuid.UUID, rel_path: str,
+    ) -> dict[str, Any] | None:
+        return self._fetch(
+            "SELECT workspace.get_node_by_path(%s, %s)", (workspace_id, rel_path),
+        )
+
+    def list_all_nodes(self, workspace_id: uuid.UUID) -> dict[str, Any]:
+        row = self._fetch("SELECT workspace.list_all_nodes(%s)", (workspace_id,))
+        return row or {"items": []}
+
     def delete_node(self, node_id: uuid.UUID) -> dict[str, Any] | None:
         return self._fetch("SELECT workspace.delete_node(%s)", (node_id,))
 
@@ -404,16 +418,23 @@ class UserWorkspaces:
         description: str | None = None,
         settings: dict[str, Any] | None = None,
         folders: list[str] | None = None,
+        home: str | None = None,
     ) -> dict[str, Any]:
         row = self._store.create_workspace(name, description, settings)
         ws_id = str(row.get("id"))
-        root = workspace_dir(self._store.fs_root, self._store.user_hex, ws_id)
+        root = Path(home) if home else workspace_dir(
+            self._store.fs_root, self._store.user_hex, ws_id,
+        )
         ensure_dir(root)
         updated = self._store.set_workspace_root(uuid.UUID(ws_id), str(root))
         if isinstance(updated, dict):
             row = updated
+        ws = Workspace(self._store, ws_id, self._config, self._log)
         for folder in folders or []:
-            Workspace(self._store, ws_id, self._config, self._log).create_folder(folder)
+            rel = str(folder).strip().lstrip("/")
+            if not rel:
+                continue
+            ws.link_path(rel, create_missing=True)
         _info(
             self._log, "workspace created",
             dbname=self._store.dbname,
@@ -423,11 +444,15 @@ class UserWorkspaces:
 
     def delete(self, workspace_id: str) -> dict[str, Any]:
         ws = Workspace(self._store, workspace_id, self._config, self._log)
-        root = workspace_dir(self._store.fs_root, self._store.user_hex, ws.id)
+        root = ws.disk_root()
+        home_root = Path(self._config.home_root).resolve()
         try:
-            remove(root, "")
-        except FsError:
-            pass
+            root.resolve().relative_to(home_root)
+        except ValueError:
+            try:
+                remove(root, "")
+            except FsError:
+                pass
         row = self._store.delete_workspace(ws._id)
         if not isinstance(row, dict):
             raise NotFoundError("Workspace")
@@ -474,9 +499,37 @@ class Workspace:
     def delete(self) -> dict[str, Any]:
         return UserWorkspaces(self._store, self._config, self._log).delete(self.id)
 
+    def disk_root(self) -> Path:
+        stored = self._data.get("root_path")
+        if stored:
+            return Path(str(stored))
+        return workspace_dir(self._store.fs_root, self._store.user_hex, self.id)
+
     def nodes(self, parent_id: str | None = None) -> dict[str, Any]:
         parent = _as_uuid(parent_id) if parent_id else None
         return self._store.list_nodes(self._id, parent)
+
+    def link_path(self, rel: str, create_missing: bool = False) -> dict[str, Any]:
+        """Привязать существующий путь под root (~/) к дереву workspace."""
+        rel = rel.strip().lstrip("/")
+        if not rel or ".." in rel:
+            raise WorkspaceError("invalid path", "INVALID_NAME")
+        root = self.disk_root()
+        ensure_dir(root)
+        path = join_rel(root, rel)
+        if not path.exists():
+            if not create_missing:
+                raise WorkspaceError("path not found", "NOT_FOUND")
+            mkdir(root, rel)
+            path = join_rel(root, rel)
+        kind = "folder" if path.is_dir() else "file"
+        name = path.name
+        files, size = folder_stats(path) if kind == "folder" else (0, path.stat().st_size)
+        row = self._store.create_node(
+            self._id, None, kind, name, rel, size, files if kind == "folder" else 0,
+        )
+        _info(self._log, "node linked", workspace_id=self.id, rel=rel)
+        return row
 
     def create_folder(self, name: str, parent_id: str | None = None) -> dict[str, Any]:
         return self._create_node("folder", name, parent_id)
@@ -485,21 +538,60 @@ class Workspace:
         return self._create_node("file", name, parent_id)
 
     def delete_node(self, node_id: str) -> dict[str, Any]:
+        """Убрать из проекта. Файлы на диске остаются."""
+        return self._unlink_id(node_id)
+
+    def unlink_path(self, rel: str) -> dict[str, Any]:
+        rel = rel.strip().lstrip("/")
+        node = self._store.get_node_by_path(self._id, rel)
+        if not isinstance(node, dict):
+            raise NotFoundError("Node")
+        return self._unlink_id(str(node["id"]))
+
+    def trash_node(self, node_id: str) -> dict[str, Any]:
+        node = self._store.get_node(_as_uuid(node_id))
+        if not isinstance(node, dict) or not _same_uuid(node.get("workspace_id"), self._id):
+            raise NotFoundError("Node")
+        rel = str(node.get("rel_path") or "")
+        return self.trash_path(rel)
+
+    def trash_path(self, rel: str) -> dict[str, Any]:
+        """Перенести в ~/Trash/albedo/ и отвязать все ноды под этим путём."""
+        rel = rel.strip().lstrip("/")
+        root = self.disk_root()
+        try:
+            dest = trash_move(root, rel)
+        except FsError as exc:
+            raise WorkspaceError(str(exc), exc.code) from exc
+        removed = self._unlink_prefix(rel)
+        _info(self._log, "path trashed", workspace_id=self.id, rel=rel, dest=dest)
+        return {"rel_path": rel, "trash_path": dest, "unlinked": removed}
+
+    def linked_paths(self) -> set[str]:
+        items = self._store.list_all_nodes(self._id).get("items") or []
+        return {str(item.get("rel_path")) for item in items if item.get("rel_path")}
+
+    def _unlink_id(self, node_id: str) -> dict[str, Any]:
         nid = _as_uuid(node_id)
         node = self._store.get_node(nid)
         if not isinstance(node, dict) or not _same_uuid(node.get("workspace_id"), self._id):
             raise NotFoundError("Node")
-        root = workspace_dir(self._store.fs_root, self._store.user_hex, self.id)
-        rel = str(node.get("rel_path") or "")
-        try:
-            remove(root, rel)
-        except FsError as exc:
-            raise WorkspaceError(str(exc), exc.code) from exc
         row = self._store.delete_node(nid)
         if not isinstance(row, dict):
             raise NotFoundError("Node")
-        _info(self._log, "node deleted", workspace_id=self.id, node_id=str(nid))
+        _info(self._log, "node unlinked", workspace_id=self.id, node_id=str(nid))
         return row
+
+    def _unlink_prefix(self, rel: str) -> int:
+        items = self._store.list_all_nodes(self._id).get("items") or []
+        count = 0
+        for item in items:
+            path = str(item.get("rel_path") or "")
+            if path == rel or path.startswith(rel + "/"):
+                row = self._store.delete_node(_as_uuid(str(item["id"])))
+                if isinstance(row, dict):
+                    count += 1
+        return count
 
     def _create_node(self, kind: str, name: str, parent_id: str | None) -> dict[str, Any]:
         clean = safe_name(name)
@@ -512,7 +604,7 @@ class Workspace:
             ):
                 raise NotFoundError("Folder")
             rel = f"{parent_row['rel_path']}/{clean}"
-        root = workspace_dir(self._store.fs_root, self._store.user_hex, self.id)
+        root = self.disk_root()
         ensure_dir(root)
         try:
             if kind == "folder":

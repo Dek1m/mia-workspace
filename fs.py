@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "touch",
     "remove",
     "folder_stats",
+    "trash_move",
 ]
 
 _NAME = re.compile(r"^[^/\\]{1,255}$")
@@ -78,6 +80,27 @@ def remove(root: Path, rel: str) -> None:
         return
     if path.exists():
         path.unlink()
+
+
+def trash_move(home: Path, rel: str) -> str:
+    """Перенести путь в ~/Trash/albedo/{utc}/{rel}. Не rm."""
+    rel = rel.strip().lstrip("/")
+    if not rel or rel in {".", ".."} or rel.startswith("Trash/") or ".." in rel:
+        raise FsError("cannot trash this path", "INVALID_NAME")
+    src = join_rel(home, rel)
+    if not src.exists():
+        raise FsError("not found", "NOT_FOUND")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    dest = (home.resolve() / "Trash" / "albedo" / stamp / rel).resolve()
+    try:
+        dest.relative_to(home.resolve())
+    except ValueError as exc:
+        raise FsError("path escape", "PATH_ESCAPE") from exc
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest = dest.with_name(f"{dest.name}.{stamp}")
+    shutil.move(str(src), str(dest))
+    return str(dest.relative_to(home.resolve()))
 
 
 def folder_stats(path: Path) -> tuple[int, int]:

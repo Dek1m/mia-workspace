@@ -23,6 +23,8 @@ class WorkspaceConfig:
     template_database: str = "template_workspace"
     # Корень диска: {fs_root}/{user_hex}/{workspace_id}/
     fs_root: str = "/var/lib/albedo/workspaces"
+    # Unix home: {home_root}/{login}/ — корень дерева папок в UI
+    home_root: str = "/home"
 
     @classmethod
     def from_env(cls) -> WorkspaceConfig:
@@ -33,4 +35,5 @@ class WorkspaceConfig:
                 "WORKSPACE_TEMPLATE_DATABASE", "template_workspace"
             ),
             fs_root=os.getenv("WORKSPACE_FS_ROOT", "/var/lib/albedo/workspaces"),
+            home_root=os.getenv("WORKSPACE_HOME_ROOT", "/home"),
         )

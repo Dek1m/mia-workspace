@@ -1,24 +1,62 @@
 """RPC API workspace для albedo. user из cookie → _session_user_id."""
 from __future__ import annotations
 
+import asyncio
+import inspect
 from typing import Any
 
 from core.task_decorator import task
 
 from .facade import NotFoundError, WorkspaceAccessor, WorkspaceError
+from .homes import ensure_unix_home, list_home, unix_name
 
 __all__ = ["WorkspaceProvider"]
 
 
+def _run_coro(coro: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result(timeout=10)
+
+
 class WorkspaceProvider:
-    def __init__(self, accessor: WorkspaceAccessor, log: Any | None = None) -> None:
+    def __init__(
+        self,
+        accessor: WorkspaceAccessor,
+        log: Any | None = None,
+        auth: Any | None = None,
+    ) -> None:
         self._accessor = accessor
         self._log = log
+        self._auth = auth
 
     def _user(self, session_user_id: str | None) -> str:
         if not session_user_id:
             raise WorkspaceError("Authentication required", "AUTH_ERROR")
         return session_user_id
+
+    def _unix(self, uid: str) -> str:
+        raw = uid
+        if self._auth is not None:
+            try:
+                fn = inspect.unwrap(self._auth.get_user)
+                if inspect.iscoroutinefunction(fn):
+                    row = _run_coro(fn(self._auth, uid))
+                else:
+                    row = fn(self._auth, uid)
+                if isinstance(row, dict) and row.get("username"):
+                    raw = str(row["username"])
+            except Exception:
+                raw = uid
+        return unix_name(raw)
+
+    def _home(self, uid: str) -> str:
+        return ensure_unix_home(self._unix(uid), self._accessor._config.home_root)
 
     @task(
         type="database",
@@ -52,8 +90,9 @@ class WorkspaceProvider:
         folders: list[str] | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        return self._accessor(user=self._user(_session_user_id)).create(
-            name, description, folders=folders,
+        uid = self._user(_session_user_id)
+        return self._accessor(user=uid).create(
+            name, description, folders=folders, home=self._home(uid),
         )
 
     @task(
@@ -125,6 +164,99 @@ class WorkspaceProvider:
     @task(
         type="database",
         api=True,
+        name="ensure_home",
+        description="Создать unix-пользователя и ~/ если ещё нет",
+        args={},
+        return_type="dict",
+    )
+    def ensure_home(self, _session_user_id: str | None = None) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        home = self._home(uid)
+        return {"home": home, "username": self._unix(uid)}
+
+    @task(
+        type="database",
+        api=True,
+        name="list_home",
+        description="Листинг каталога относительно ~/",
+        args={"rel_path": "str", "workspace_id": "str"},
+        return_type="dict",
+    )
+    def list_home(
+        self,
+        rel_path: str = "",
+        workspace_id: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        home = self._home(uid)
+        items = list_home(home, rel_path or "")
+        linked: set[str] = set()
+        if workspace_id:
+            linked = self._accessor(user=uid, ws=workspace_id).linked_paths()
+        for item in items:
+            item["linked"] = item.get("rel_path") in linked
+        return {"home": home, "items": items}
+
+    @task(
+        type="database",
+        api=True,
+        name="link_home_path",
+        description="Привязать путь из ~/ к workspace",
+        args={"workspace_id": "str", "rel_path": "str"},
+        return_type="dict",
+    )
+    def link_home_path(
+        self,
+        workspace_id: str,
+        rel_path: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        self._home(uid)
+        ws = self._accessor(user=uid, ws=workspace_id)
+        return ws.link_path(rel_path, create_missing=False)
+
+    @task(
+        type="database",
+        api=True,
+        name="unlink_home_path",
+        description="Убрать путь из проекта. Файлы на диске остаются",
+        args={"workspace_id": "str", "rel_path": "str"},
+        return_type="dict",
+    )
+    def unlink_home_path(
+        self,
+        workspace_id: str,
+        rel_path: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        ws = self._accessor(user=uid, ws=workspace_id)
+        return ws.unlink_path(rel_path)
+
+    @task(
+        type="database",
+        api=True,
+        name="trash_home_path",
+        description="Перенести путь в ~/Trash/albedo/ и отвязать от проекта",
+        args={"workspace_id": "str", "rel_path": "str"},
+        return_type="dict",
+    )
+    def trash_home_path(
+        self,
+        workspace_id: str,
+        rel_path: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        self._home(uid)
+        ws = self._accessor(user=uid, ws=workspace_id)
+        return ws.trash_path(rel_path)
+
+    @task(
+        type="database",
+        api=True,
         name="create_file",
         description="Создать файл на диске и запись в БД",
         args={"workspace_id": "str", "name": "str", "parent_id": "str"},
@@ -144,7 +276,7 @@ class WorkspaceProvider:
         type="database",
         api=True,
         name="delete_node",
-        description="Удалить папку или файл",
+        description="Убрать ноду из проекта. Файлы на диске остаются",
         args={"workspace_id": "str", "node_id": "str"},
         return_type="dict",
     )
@@ -156,6 +288,25 @@ class WorkspaceProvider:
     ) -> dict[str, Any]:
         ws = self._accessor(user=self._user(_session_user_id), ws=workspace_id)
         return ws.delete_node(node_id)
+
+    @task(
+        type="database",
+        api=True,
+        name="trash_node",
+        description="Перенести ноду в ~/Trash/albedo/ и отвязать",
+        args={"workspace_id": "str", "node_id": "str"},
+        return_type="dict",
+    )
+    def trash_node(
+        self,
+        workspace_id: str,
+        node_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        self._home(uid)
+        ws = self._accessor(user=uid, ws=workspace_id)
+        return ws.trash_node(node_id)
 
     @task(
         type="database",

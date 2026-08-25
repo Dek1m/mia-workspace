@@ -33,7 +33,7 @@ __all__ = [
     "WorkspaceProvider",
 ]
 
-MODULE_VERSION = "2.1.0"
+MODULE_VERSION = "2.3.0"
 
 
 class WorkspaceModule(ModuleBase):
@@ -70,7 +70,14 @@ class WorkspaceModule(ModuleBase):
             database=database, log=self._log, config=self._config,
         )
         state.workspace = accessor
-        self._provider = WorkspaceProvider(accessor, self._log)
+        auth = None
+        try:
+            from modules.auth.provider import AuthProvider
+
+            auth = state.services.resolve(AuthProvider)
+        except Exception:
+            auth = None
+        self._provider = WorkspaceProvider(accessor, self._log, auth)
         state.services.register(WorkspaceProvider, self._provider)
         self._register_auth_schema(state)
         self._log.info("WorkspaceModule loaded", extra={"version": self.version})
