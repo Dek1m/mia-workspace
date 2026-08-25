@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import uuid
+from pathlib import Path
 from typing import Any
 
 from core.task_decorator import task
 
-from pathlib import Path
-
 from .facade import NotFoundError, WorkspaceAccessor, WorkspaceError
-from .fs import mkdir, safe_name, touch, trash_move
-from .homes import ensure_unix_home, list_home, unix_name
+from .fs import folder_stats, join_rel, trash_move
+from .homes import ensure_nested, ensure_unix_home, list_home, unix_name
 
 __all__ = ["WorkspaceProvider"]
 
@@ -188,23 +188,38 @@ class WorkspaceProvider:
         api=True,
         name="list_home",
         description="Листинг каталога относительно ~/",
-        args={"rel_path": "str", "workspace_id": "str"},
+        args={
+            "rel_path": "str",
+            "workspace_id": "str",
+            "include_hidden": "bool",
+            "include_size": "bool",
+        },
         return_type="dict",
     )
     def list_home(
         self,
         rel_path: str = "",
         workspace_id: str | None = None,
+        include_hidden: bool = False,
+        include_size: bool = False,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
         home = self._home(uid)
-        items = list_home(home, rel_path or "")
+        items = list_home(
+            home,
+            rel_path or "",
+            include_hidden=include_hidden,
+            include_size=include_size,
+        )
         linked: set[str] = set()
         if workspace_id:
             linked = self._ws(uid, workspace_id).linked_paths()
         for item in items:
-            item["linked"] = item.get("rel_path") in linked
+            rel = str(item.get("rel_path") or "")
+            item["linked"] = rel in linked or any(
+                rel.startswith(f"{parent}/") for parent in linked
+            )
         return {"home": home, "items": items}
 
     @task(
@@ -225,15 +240,42 @@ class WorkspaceProvider:
         if kind not in {"folder", "file"}:
             raise WorkspaceError("invalid kind", "INVALID_NAME")
         uid = self._user(_session_user_id)
-        home = Path(self._home(uid))
-        clean = safe_name(name)
+        home = self._home(uid)
         parent = parent_rel.strip().lstrip("/")
-        rel = f"{parent}/{clean}" if parent else clean
-        if kind == "folder":
-            mkdir(home, rel)
-        else:
-            touch(home, rel)
-        return {"name": clean, "kind": kind, "rel_path": rel, "linked": False}
+        rel = f"{parent}/{name.strip()}" if parent else name.strip()
+        row = ensure_nested(home, rel, kind, self._unix(uid))
+        row["linked"] = False
+        return row
+
+    @task(
+        type="database",
+        api=True,
+        name="refresh_home",
+        description="Перечитать ~/ и обновить размеры связанных нод",
+        args={"workspace_id": "str"},
+        return_type="dict",
+    )
+    def refresh_home(
+        self,
+        workspace_id: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        home = Path(self._home(uid))
+        updated = 0
+        if workspace_id:
+            ws = self._ws(uid, workspace_id)
+            for item in ws._store.list_all_nodes(ws._id).get("items") or []:
+                rel = str(item.get("rel_path") or "")
+                if not rel:
+                    continue
+                path = join_rel(home, rel)
+                if not path.exists() or item.get("kind") != "folder":
+                    continue
+                files, size = folder_stats(path)
+                ws._store.touch_folder_stats(uuid.UUID(str(item["id"])), files, size)
+                updated += 1
+        return {"home": str(home), "updated": updated}
 
     @task(
         type="database",
@@ -250,7 +292,16 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        return self._ws(uid, workspace_id).link_path(rel_path, create_missing=False)
+        rel = rel_path.strip().lstrip("/")
+        ws = self._ws(uid, workspace_id)
+        for parent in ws.linked_paths():
+            if rel == parent:
+                raise WorkspaceError("already in workspace", "ALREADY_LINKED")
+            if rel.startswith(f"{parent}/"):
+                raise WorkspaceError(
+                    f"already nested in {parent}", "ALREADY_NESTED",
+                )
+        return ws.link_path(rel, create_missing=False)
 
     @task(
         type="database",
