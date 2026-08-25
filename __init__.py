@@ -58,6 +58,7 @@ class WorkspaceModule(ModuleBase):
     def __init__(self, config: WorkspaceConfig | None = None) -> None:
         self._config = config or WorkspaceConfig.from_env()
         self._log = None
+        self._provider: WorkspaceProvider | None = None
 
     def on_load(self, state: Any) -> None:
         """Вешает state.workspace. Схему user-БД накатывает фасад при первом заходе."""
@@ -69,13 +70,15 @@ class WorkspaceModule(ModuleBase):
             database=database, log=self._log, config=self._config,
         )
         state.workspace = accessor
-        state.services.register(WorkspaceProvider, WorkspaceProvider(accessor, self._log))
+        self._provider = WorkspaceProvider(accessor, self._log)
+        state.services.register(WorkspaceProvider, self._provider)
         self._register_auth_schema(state)
         self._log.info("WorkspaceModule loaded", extra={"version": self.version})
 
     def on_unload(self) -> None:
         if self._log is not None:
             self._log.info("WorkspaceModule unloaded")
+        self._provider = None
         self._log = None
 
     def _register_auth_schema(self, state: Any) -> None:
