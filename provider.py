@@ -10,7 +10,7 @@ from typing import Any
 from core.task_decorator import task
 
 from .facade import NotFoundError, WorkspaceAccessor, WorkspaceError
-from .fs import folder_stats, join_rel, trash_move
+from .fs import dir_child_count, folder_stats, join_rel, move_into, trash_move
 from .homes import ensure_nested, ensure_unix_home, list_home, unix_name
 
 __all__ = ["WorkspaceProvider"]
@@ -340,6 +340,53 @@ class WorkspaceProvider:
             return self._ws(uid, workspace_id).trash_path(rel_path)
         dest = trash_move(Path(home), rel_path)
         return {"rel_path": rel_path, "trash_path": dest, "unlinked": 0}
+
+    @task(
+        type="database",
+        api=True,
+        name="home_stat",
+        description="Тип пути и число детей в каталоге",
+        args={"rel_path": "str"},
+        return_type="dict",
+    )
+    def home_stat(
+        self,
+        rel_path: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        home = Path(self._home(uid))
+        rel = rel_path.strip().lstrip("/")
+        path = join_rel(home, rel) if rel else home
+        if not path.exists():
+            raise WorkspaceError("path not found", "NOT_FOUND")
+        kind = "folder" if path.is_dir() else "file"
+        return {"rel_path": rel, "kind": kind, "child_count": dir_child_count(path)}
+
+    @task(
+        type="database",
+        api=True,
+        name="move_home_path",
+        description="Перенести путь в другой каталог на диске",
+        args={"src": "str", "dest_dir": "str", "workspace_id": "str"},
+        return_type="dict",
+    )
+    def move_home_path(
+        self,
+        src: str,
+        dest_dir: str,
+        workspace_id: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        home = Path(self._home(uid))
+        new_rel = move_into(home, src, dest_dir)
+        rewritten = 0
+        if workspace_id:
+            rewritten = self._ws(uid, workspace_id).rewrite_after_move(
+                src.strip().lstrip("/"), new_rel,
+            )
+        return {"rel_path": new_rel, "rewritten": rewritten}
 
     @task(
         type="database",

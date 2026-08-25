@@ -18,6 +18,8 @@ __all__ = [
     "remove",
     "folder_stats",
     "trash_move",
+    "move_into",
+    "dir_child_count",
 ]
 
 _NAME = re.compile(r"^[^/\\]{1,255}$")
@@ -116,3 +118,36 @@ def folder_stats(path: Path) -> tuple[int, int]:
             except OSError:
                 continue
     return files, size
+
+
+def dir_child_count(path: Path) -> int:
+    if not path.is_dir():
+        return 0
+    return sum(1 for _ in path.iterdir())
+
+
+def move_into(home: Path, src_rel: str, dest_dir_rel: str) -> str:
+    """Перенести src в каталог dest_dir. Оба пути относительно home."""
+    src_rel = src_rel.strip().lstrip("/")
+    dest_dir_rel = dest_dir_rel.strip().lstrip("/")
+    if not src_rel or ".." in src_rel or ".." in dest_dir_rel:
+        raise FsError("invalid path", "INVALID_NAME")
+    root = home.resolve()
+    src = join_rel(root, src_rel)
+    dest_dir = join_rel(root, dest_dir_rel) if dest_dir_rel else root
+    if not src.exists():
+        raise FsError("not found", "NOT_FOUND")
+    if not dest_dir.is_dir():
+        raise FsError("destination is not a folder", "NOT_FOUND")
+    dest = dest_dir / src.name
+    if dest.resolve() == src.resolve():
+        return str(src.relative_to(root))
+    try:
+        dest.resolve().relative_to(src.resolve())
+        raise FsError("cannot move into itself", "INVALID_NAME")
+    except ValueError:
+        pass
+    if dest.exists():
+        raise FsError("already exists", "ALREADY_EXISTS")
+    shutil.move(str(src), str(dest))
+    return str(dest.resolve().relative_to(root))

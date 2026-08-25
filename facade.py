@@ -258,6 +258,14 @@ class UserStore:
     def delete_node(self, node_id: uuid.UUID) -> dict[str, Any] | None:
         return self._fetch("SELECT workspace.delete_node(%s)", (node_id,))
 
+    def rewrite_paths(self, workspace_id: uuid.UUID, old: str, new: str) -> int:
+        row = self._fetch(
+            "SELECT workspace.rewrite_paths(%s, %s, %s)", (workspace_id, old, new),
+        )
+        if isinstance(row, int):
+            return row
+        return int(row or 0)
+
     def touch_folder_stats(
         self, node_id: uuid.UUID, file_count: int, size_bytes: int,
     ) -> None:
@@ -582,6 +590,11 @@ class Workspace:
         removed = self._unlink_prefix(rel)
         _info(self._log, "path trashed", workspace_id=self.id, rel=rel, dest=dest)
         return {"rel_path": rel, "trash_path": dest, "unlinked": removed}
+
+    def rewrite_after_move(self, old: str, new: str) -> int:
+        count = self._store.rewrite_paths(self._id, old, new)
+        _info(self._log, "paths rewritten", workspace_id=self.id, old=old, new=new, count=count)
+        return count
 
     def linked_paths(self) -> set[str]:
         items = self._store.list_all_nodes(self._id).get("items") or []
