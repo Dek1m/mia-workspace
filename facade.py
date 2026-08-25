@@ -505,6 +505,22 @@ class Workspace:
             return Path(str(stored))
         return workspace_dir(self._store.fs_root, self._store.user_hex, self.id)
 
+    def ensure_root(self, home: str) -> None:
+        """Корень диска — ~/ пользователя, не старый workspace_dir."""
+        target = Path(home).resolve()
+        current = self.disk_root()
+        try:
+            if current.resolve() == target:
+                return
+        except OSError:
+            pass
+        ensure_dir(target)
+        updated = self._store.set_workspace_root(self._id, str(target))
+        if isinstance(updated, dict):
+            self._data = updated
+        else:
+            self._data["root_path"] = str(target)
+
     def nodes(self, parent_id: str | None = None) -> dict[str, Any]:
         parent = _as_uuid(parent_id) if parent_id else None
         return self._store.list_nodes(self._id, parent)

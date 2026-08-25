@@ -61,6 +61,12 @@ class WorkspaceProvider:
     def _home(self, uid: str) -> str:
         return ensure_unix_home(self._unix(uid), self._accessor._config.home_root)
 
+    def _ws(self, uid: str, workspace_id: str) -> Any:
+        home = self._home(uid)
+        ws = self._accessor(user=uid, ws=workspace_id)
+        ws.ensure_root(home)
+        return ws
+
     @task(
         type="database",
         api=True,
@@ -196,7 +202,7 @@ class WorkspaceProvider:
         items = list_home(home, rel_path or "")
         linked: set[str] = set()
         if workspace_id:
-            linked = self._accessor(user=uid, ws=workspace_id).linked_paths()
+            linked = self._ws(uid, workspace_id).linked_paths()
         for item in items:
             item["linked"] = item.get("rel_path") in linked
         return {"home": home, "items": items}
@@ -244,9 +250,7 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        self._home(uid)
-        ws = self._accessor(user=uid, ws=workspace_id)
-        return ws.link_path(rel_path, create_missing=False)
+        return self._ws(uid, workspace_id).link_path(rel_path, create_missing=False)
 
     @task(
         type="database",
@@ -263,8 +267,7 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        ws = self._accessor(user=uid, ws=workspace_id)
-        return ws.unlink_path(rel_path)
+        return self._ws(uid, workspace_id).unlink_path(rel_path)
 
     @task(
         type="database",
@@ -283,7 +286,7 @@ class WorkspaceProvider:
         uid = self._user(_session_user_id)
         home = self._home(uid)
         if workspace_id:
-            return self._accessor(user=uid, ws=workspace_id).trash_path(rel_path)
+            return self._ws(uid, workspace_id).trash_path(rel_path)
         dest = trash_move(Path(home), rel_path)
         return {"rel_path": rel_path, "trash_path": dest, "unlinked": 0}
 
@@ -337,9 +340,7 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        self._home(uid)
-        ws = self._accessor(user=uid, ws=workspace_id)
-        return ws.trash_node(node_id)
+        return self._ws(uid, workspace_id).trash_node(node_id)
 
     @task(
         type="database",
