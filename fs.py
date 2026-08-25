@@ -20,6 +20,7 @@ __all__ = [
     "trash_move",
     "move_into",
     "dir_child_count",
+    "rename_path",
 ]
 
 _NAME = re.compile(r"^[^/\\]{1,255}$")
@@ -147,6 +148,22 @@ def move_into(home: Path, src_rel: str, dest_dir_rel: str) -> str:
         raise FsError("cannot move into itself", "INVALID_NAME")
     except ValueError:
         pass
+    if dest.exists():
+        raise FsError("already exists", "ALREADY_EXISTS")
+    shutil.move(str(src), str(dest))
+    return str(dest.resolve().relative_to(root))
+
+
+def rename_path(home: Path, src_rel: str, new_name: str) -> str:
+    src_rel = src_rel.strip().lstrip("/")
+    clean = safe_name(new_name)
+    root = home.resolve()
+    src = join_rel(root, src_rel)
+    if not src.exists():
+        raise FsError("not found", "NOT_FOUND")
+    dest = src.parent / clean
+    if dest.resolve() == src.resolve():
+        return src_rel
     if dest.exists():
         raise FsError("already exists", "ALREADY_EXISTS")
     shutil.move(str(src), str(dest))

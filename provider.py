@@ -10,10 +10,20 @@ from typing import Any
 from core.task_decorator import task
 
 from .facade import NotFoundError, WorkspaceAccessor, WorkspaceError
-from .fs import dir_child_count, folder_stats, join_rel, move_into, trash_move
+from .fs import dir_child_count, folder_stats, join_rel, move_into, rename_path, trash_move
 from .homes import ensure_nested, ensure_unix_home, list_home, unix_name
 
 __all__ = ["WorkspaceProvider"]
+
+
+def _cover(rel: str, linked: set[str], excluded: set[str]) -> str:
+    if any(rel == item or rel.startswith(f"{item}/") for item in excluded):
+        return "excluded"
+    if rel in linked:
+        return "linked"
+    if any(rel.startswith(f"{parent}/") for parent in linked):
+        return "inherited"
+    return "none"
 
 
 def _run_coro(coro: Any) -> Any:
@@ -213,13 +223,17 @@ class WorkspaceProvider:
             include_size=include_size,
         )
         linked: set[str] = set()
+        excluded: set[str] = set()
         if workspace_id:
-            linked = self._ws(uid, workspace_id).linked_paths()
+            ws = self._ws(uid, workspace_id)
+            linked = ws.linked_paths()
+            excluded = ws.excluded_paths()
         for item in items:
             rel = str(item.get("rel_path") or "")
-            item["linked"] = rel in linked or any(
-                rel.startswith(f"{parent}/") for parent in linked
-            )
+            cover = _cover(rel, linked, excluded)
+            item["linked"] = cover == "linked"
+            item["inherited"] = cover == "inherited"
+            item["excluded"] = cover == "excluded"
         return {"home": home, "items": items}
 
     @task(
@@ -387,6 +401,73 @@ class WorkspaceProvider:
                 src.strip().lstrip("/"), new_rel,
             )
         return {"rel_path": new_rel, "rewritten": rewritten}
+
+    @task(
+        type="database",
+        api=True,
+        name="rename_home_path",
+        description="Переименовать файл или папку на диске",
+        args={"src": "str", "new_name": "str", "workspace_id": "str"},
+        return_type="dict",
+    )
+    def rename_home_path(
+        self,
+        src: str,
+        new_name: str,
+        workspace_id: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        home = Path(self._home(uid))
+        old = src.strip().lstrip("/")
+        new_rel = rename_path(home, old, new_name)
+        rewritten = 0
+        if workspace_id:
+            rewritten = self._ws(uid, workspace_id).rewrite_after_move(old, new_rel)
+        return {"rel_path": new_rel, "rewritten": rewritten}
+
+    @task(
+        type="database",
+        api=True,
+        name="exclude_home_path",
+        description="Исключить вложенный путь из workspace, файлы на диске остаются",
+        args={"workspace_id": "str", "rel_path": "str"},
+        return_type="dict",
+    )
+    def exclude_home_path(
+        self,
+        workspace_id: str,
+        rel_path: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        rel = rel_path.strip().lstrip("/")
+        ws = self._ws(uid, workspace_id)
+        if rel in ws.linked_paths():
+            return ws.unlink_path(rel)
+        excluded = ws.excluded_paths()
+        excluded.add(rel)
+        return ws.set_excluded(excluded)
+
+    @task(
+        type="database",
+        api=True,
+        name="include_home_path",
+        description="Вернуть исключённый путь в покрытие workspace",
+        args={"workspace_id": "str", "rel_path": "str"},
+        return_type="dict",
+    )
+    def include_home_path(
+        self,
+        workspace_id: str,
+        rel_path: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        rel = rel_path.strip().lstrip("/")
+        ws = self._ws(uid, workspace_id)
+        excluded = {item for item in ws.excluded_paths() if item != rel}
+        return ws.set_excluded(excluded)
 
     @task(
         type="database",

@@ -258,6 +258,14 @@ class UserStore:
     def delete_node(self, node_id: uuid.UUID) -> dict[str, Any] | None:
         return self._fetch("SELECT workspace.delete_node(%s)", (node_id,))
 
+    def patch_settings(
+        self, workspace_id: uuid.UUID, settings: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._fetch(
+            "SELECT workspace.patch_settings(%s, %s)",
+            (workspace_id, json.dumps(settings)),
+        )
+
     def rewrite_paths(self, workspace_id: uuid.UUID, old: str, new: str) -> int:
         row = self._fetch(
             "SELECT workspace.rewrite_paths(%s, %s, %s)", (workspace_id, old, new),
@@ -595,6 +603,25 @@ class Workspace:
         count = self._store.rewrite_paths(self._id, old, new)
         _info(self._log, "paths rewritten", workspace_id=self.id, old=old, new=new, count=count)
         return count
+
+    def settings(self) -> dict[str, Any]:
+        raw = self._data.get("settings") or {}
+        if isinstance(raw, str):
+            return json.loads(raw)
+        if isinstance(raw, dict):
+            return dict(raw)
+        return {}
+
+    def excluded_paths(self) -> set[str]:
+        items = self.settings().get("exclude_paths") or []
+        return {str(item) for item in items if item}
+
+    def set_excluded(self, paths: set[str]) -> dict[str, Any]:
+        clean = sorted(p.strip().lstrip("/") for p in paths if p and ".." not in p)
+        updated = self._store.patch_settings(self._id, {"exclude_paths": clean})
+        if isinstance(updated, dict):
+            self._data = updated
+        return self._data
 
     def linked_paths(self) -> set[str]:
         items = self._store.list_all_nodes(self._id).get("items") or []
