@@ -202,7 +202,8 @@ BEGIN
     )
     INTO v_items
     FROM (
-        SELECT id, workspace_id, title, status, agent_id, metadata, created_at, updated_at
+        SELECT id, workspace_id, title, status, agent_id, metadata,
+               tab_open, agent_busy, created_at, updated_at
         FROM workspace.sessions
         WHERE workspace_id = p_workspace_id
           AND (p_status IS NULL OR status = p_status)

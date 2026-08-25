@@ -20,6 +20,7 @@ from .facade import (
     WorkspaceAccessor,
     WorkspaceError,
 )
+from .provider import WorkspaceProvider
 
 __all__ = [
     "WorkspaceModule",
@@ -29,9 +30,10 @@ __all__ = [
     "Workspace",
     "WorkspaceError",
     "NotFoundError",
+    "WorkspaceProvider",
 ]
 
-MODULE_VERSION = "2.0.0"
+MODULE_VERSION = "2.1.0"
 
 
 class WorkspaceModule(ModuleBase):
@@ -63,9 +65,11 @@ class WorkspaceModule(ModuleBase):
         from modules.db.provider import DatabaseProvider
 
         database = state.services.resolve(DatabaseProvider)
-        state.workspace = WorkspaceAccessor(
+        accessor = WorkspaceAccessor(
             database=database, log=self._log, config=self._config,
         )
+        state.workspace = accessor
+        state.services.register(WorkspaceProvider, WorkspaceProvider(accessor, self._log))
         self._register_auth_schema(state)
         self._log.info("WorkspaceModule loaded", extra={"version": self.version})
 

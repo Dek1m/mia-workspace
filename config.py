@@ -21,6 +21,8 @@ class WorkspaceConfig:
     max_page_size: int = 200
     # Шаблон user-БД. Пустая строка — CREATE DATABASE без TEMPLATE.
     template_database: str = "template_workspace"
+    # Корень диска: {fs_root}/{user_hex}/{workspace_id}/
+    fs_root: str = "/var/lib/albedo/workspaces"
 
     @classmethod
     def from_env(cls) -> WorkspaceConfig:
@@ -30,4 +32,5 @@ class WorkspaceConfig:
             template_database=os.getenv(
                 "WORKSPACE_TEMPLATE_DATABASE", "template_workspace"
             ),
+            fs_root=os.getenv("WORKSPACE_FS_ROOT", "/var/lib/albedo/workspaces"),
         )

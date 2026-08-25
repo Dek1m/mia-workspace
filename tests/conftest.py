@@ -92,6 +92,7 @@ class FakeDatabase:
         self.workspaces: dict[str, dict[str, dict[str, Any]]] = {}
         self.sessions: dict[str, dict[str, dict[str, Any]]] = {}
         self.events: dict[str, list[dict[str, Any]]] = {}
+        self.nodes: dict[str, dict[str, dict[str, Any]]] = {}
 
     def get_system_pool(self) -> FakePool:
         return self.system
@@ -134,6 +135,7 @@ class FakeDatabase:
         table_ws = self.workspaces.setdefault(dbname, {})
         table_ss = self.sessions.setdefault(dbname, {})
         table_ev = self.events.setdefault(dbname, [])
+        table_nd = self.nodes.setdefault(dbname, {})
         if func == "list_workspaces":
             items = list(table_ws.values())
             return {"items": items, "total": len(items), "limit": params[1], "offset": params[2]}
@@ -146,9 +148,18 @@ class FakeDatabase:
                 "description": params[1],
                 "settings": json.loads(params[2]) if isinstance(params[2], str) else params[2],
                 "is_archived": False,
+                "root_path": None,
             }
             table_ws[row["id"]] = row
             return row
+        if func == "set_workspace_root":
+            row = table_ws.get(str(params[0]))
+            if row is None:
+                return None
+            row["root_path"] = params[1]
+            return row
+        if func == "delete_workspace":
+            return table_ws.pop(str(params[0]), None)
         if func == "list_sessions":
             items = [s for s in table_ss.values() if s["workspace_id"] == str(params[0])]
             return {"items": items, "total": len(items), "limit": params[2], "offset": params[3]}
@@ -161,9 +172,55 @@ class FakeDatabase:
                 "title": params[1],
                 "status": "active",
                 "agent_id": str(params[2]) if params[2] else None,
+                "tab_open": False,
+                "agent_busy": False,
             }
             table_ss[row["id"]] = row
             return row
+        if func == "delete_session":
+            return table_ss.pop(str(params[0]), None)
+        if func == "set_session_flags":
+            row = table_ss.get(str(params[0]))
+            if row is None:
+                return None
+            if params[1] is not None:
+                row["tab_open"] = params[1]
+            if params[2] is not None:
+                row["agent_busy"] = params[2]
+            return row
+        if func == "close_all_tabs":
+            n = 0
+            for sess in table_ss.values():
+                if sess.get("workspace_id") == str(params[0]) and sess.get("tab_open"):
+                    sess["tab_open"] = False
+                    n += 1
+            return {"closed": n}
+        if func == "create_node":
+            row = {
+                "id": str(uuid.uuid4()),
+                "workspace_id": str(params[0]),
+                "parent_id": str(params[1]) if params[1] else None,
+                "kind": params[2],
+                "name": params[3],
+                "rel_path": params[4],
+                "size_bytes": params[5],
+                "file_count": params[6],
+            }
+            table_nd[row["id"]] = row
+            return row
+        if func == "list_nodes":
+            parent = str(params[1]) if params[1] else None
+            items = [
+                n for n in table_nd.values()
+                if n["workspace_id"] == str(params[0]) and n.get("parent_id") == parent
+            ]
+            return {"items": items}
+        if func == "get_node":
+            return table_nd.get(str(params[0]))
+        if func == "delete_node":
+            return table_nd.pop(str(params[0]), None)
+        if func == "touch_folder_stats":
+            return None
         if func == "fetch_timeline":
             items = [e for e in table_ev if e["session_id"] == str(params[0])]
             return {
@@ -203,10 +260,12 @@ def database() -> FakeDatabase:
 
 
 @pytest.fixture
-def accessor(database: FakeDatabase, log: RecordingLog):
+def accessor(database: FakeDatabase, log: RecordingLog, tmp_path):
     from modules.workspace.config import WorkspaceConfig
     from modules.workspace.facade import WorkspaceAccessor
 
     return WorkspaceAccessor(
-        database=database, log=log, config=WorkspaceConfig(),
+        database=database,
+        log=log,
+        config=WorkspaceConfig(fs_root=str(tmp_path)),
     )

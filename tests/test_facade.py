@@ -85,6 +85,7 @@ def test_create_and_list_workspaces(
     listed = bag.list()
     assert created["name"] == "Inbox"
     assert listed["total"] == 1
+    assert created.get("root_path")
     extras = [extra for _, msg, extra in log.records if msg == "workspaces listed"]
     assert extras and "items" not in extras[0]
 
@@ -118,6 +119,23 @@ def test_sessions_timeline_does_not_log_content(
     blob = str(extras[0])
     assert "secret-body" not in blob
     assert "items" not in extras[0]
+
+
+def test_folder_on_disk_and_session_tabs(
+    accessor: WorkspaceAccessor, tmp_path,
+) -> None:
+    bag = accessor(user=USER_UUID)
+    created = bag.create("Inbox", folders=["docs"])
+    ws = accessor(user=USER_UUID, ws=created["id"])
+    nodes = ws.nodes()
+    assert any(n["name"] == "docs" and n["kind"] == "folder" for n in nodes["items"])
+    session = ws.create_session("Chat")
+    opened = ws.open_session(session["id"])
+    assert opened["tab_open"] is True
+    closed = ws.close_session(session["id"])
+    assert closed["tab_open"] is False
+    busy = ws.set_agent_busy(session["id"], True)
+    assert busy["agent_busy"] is True
 
 
 def test_workspace_not_found(accessor: WorkspaceAccessor) -> None:
@@ -163,9 +181,17 @@ def test_on_load_hangs_accessor_on_state(database: FakeDatabase, log: RecordingL
     from modules.workspace import WorkspaceModule
 
     class Services:
+        def __init__(self) -> None:
+            self._reg: dict[type, object] = {}
+
+        def register(self, cls: type, inst: object) -> None:
+            self._reg[cls] = inst
+
         def resolve(self, cls: type) -> object:
             if cls is DatabaseProvider:
                 return database
+            if cls in self._reg:
+                return self._reg[cls]
             raise LookupError(getattr(cls, "__name__", cls))
 
     class State:
@@ -179,3 +205,6 @@ def test_on_load_hangs_accessor_on_state(database: FakeDatabase, log: RecordingL
     assert database.created == []
     assert database.schema_calls == []
     assert state.workspace(user=USER_UUID).list()["total"] == 0
+    from modules.workspace.provider import WorkspaceProvider
+
+    assert isinstance(state.services.resolve(WorkspaceProvider), WorkspaceProvider)

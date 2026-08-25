@@ -12,6 +12,16 @@ from datetime import datetime
 from typing import Any
 
 from .config import WorkspaceConfig
+from .fs import (
+    FsError,
+    ensure_dir,
+    folder_stats,
+    mkdir,
+    remove,
+    safe_name,
+    touch,
+    workspace_dir,
+)
 from .schemas import DB_SCHEMA, TEMPLATE_DATABASE, user_dbname, uuid_hex
 
 __all__ = [
@@ -90,9 +100,11 @@ def _info(log: Any, message: str, **extra: Any) -> None:
 class UserStore:
     """Открытая user-БД: SELECT workspace.* только."""
 
-    def __init__(self, pool: Any, dbname: str) -> None:
+    def __init__(self, pool: Any, dbname: str, user_hex: str, fs_root: str) -> None:
         self.pool = pool
         self.dbname = dbname
+        self.user_hex = user_hex
+        self.fs_root = fs_root
 
     def list_workspaces(self, include_archived: bool, limit: int, offset: int) -> dict[str, Any]:
         row = self._fetch(
@@ -174,6 +186,72 @@ class UserStore:
             raise WorkspaceError("insert_event returned empty", "DATABASE_ERROR")
         return row
 
+    def delete_workspace(self, workspace_id: uuid.UUID) -> dict[str, Any] | None:
+        return self._fetch("SELECT workspace.delete_workspace(%s)", (workspace_id,))
+
+    def set_workspace_root(self, workspace_id: uuid.UUID, root: str) -> dict[str, Any] | None:
+        return self._fetch(
+            "SELECT workspace.set_workspace_root(%s, %s)", (workspace_id, root),
+        )
+
+    def delete_session(self, session_id: uuid.UUID) -> dict[str, Any] | None:
+        return self._fetch("SELECT workspace.delete_session(%s)", (session_id,))
+
+    def set_session_flags(
+        self,
+        session_id: uuid.UUID,
+        tab_open: bool | None,
+        agent_busy: bool | None,
+    ) -> dict[str, Any] | None:
+        return self._fetch(
+            "SELECT workspace.set_session_flags(%s, %s, %s)",
+            (session_id, tab_open, agent_busy),
+        )
+
+    def close_all_tabs(self, workspace_id: uuid.UUID) -> dict[str, Any]:
+        row = self._fetch("SELECT workspace.close_all_tabs(%s)", (workspace_id,))
+        return row or {"closed": 0}
+
+    def create_node(
+        self,
+        workspace_id: uuid.UUID,
+        parent_id: uuid.UUID | None,
+        kind: str,
+        name: str,
+        rel_path: str,
+        size_bytes: int,
+        file_count: int,
+    ) -> dict[str, Any]:
+        row = self._fetch(
+            "SELECT workspace.create_node(%s, %s, %s, %s, %s, %s, %s)",
+            (workspace_id, parent_id, kind, name, rel_path, size_bytes, file_count),
+        )
+        if not isinstance(row, dict):
+            raise WorkspaceError("create_node returned empty", "DATABASE_ERROR")
+        return row
+
+    def list_nodes(
+        self, workspace_id: uuid.UUID, parent_id: uuid.UUID | None,
+    ) -> dict[str, Any]:
+        row = self._fetch(
+            "SELECT workspace.list_nodes(%s, %s)", (workspace_id, parent_id),
+        )
+        return row or {"items": []}
+
+    def get_node(self, node_id: uuid.UUID) -> dict[str, Any] | None:
+        return self._fetch("SELECT workspace.get_node(%s)", (node_id,))
+
+    def delete_node(self, node_id: uuid.UUID) -> dict[str, Any] | None:
+        return self._fetch("SELECT workspace.delete_node(%s)", (node_id,))
+
+    def touch_folder_stats(
+        self, node_id: uuid.UUID, file_count: int, size_bytes: int,
+    ) -> None:
+        self._fetch(
+            "SELECT workspace.touch_folder_stats(%s, %s, %s)",
+            (node_id, file_count, size_bytes),
+        )
+
     def _fetch(self, query: str, params: tuple[Any, ...]) -> Any:
         try:
             with self.pool.connection() as conn:
@@ -214,7 +292,12 @@ class WorkspaceCatalog:
         dbname = user_dbname(hex_id)
         self._ensure(dbname, hex_id)
         pool = self._database.get_pool(dbname)
-        return UserStore(pool=pool, dbname=dbname)
+        return UserStore(
+            pool=pool,
+            dbname=dbname,
+            user_hex=hex_id,
+            fs_root=self._config.fs_root,
+        )
 
     def _ensure(self, dbname: str, user_hex: str) -> None:
         with self._guard:
@@ -320,13 +403,35 @@ class UserWorkspaces:
         name: str,
         description: str | None = None,
         settings: dict[str, Any] | None = None,
+        folders: list[str] | None = None,
     ) -> dict[str, Any]:
         row = self._store.create_workspace(name, description, settings)
+        ws_id = str(row.get("id"))
+        root = workspace_dir(self._store.fs_root, self._store.user_hex, ws_id)
+        ensure_dir(root)
+        updated = self._store.set_workspace_root(uuid.UUID(ws_id), str(root))
+        if isinstance(updated, dict):
+            row = updated
+        for folder in folders or []:
+            Workspace(self._store, ws_id, self._config, self._log).create_folder(folder)
         _info(
             self._log, "workspace created",
             dbname=self._store.dbname,
             workspace_id=row.get("id"),
         )
+        return row
+
+    def delete(self, workspace_id: str) -> dict[str, Any]:
+        ws = Workspace(self._store, workspace_id, self._config, self._log)
+        root = workspace_dir(self._store.fs_root, self._store.user_hex, ws.id)
+        try:
+            remove(root, "")
+        except FsError:
+            pass
+        row = self._store.delete_workspace(ws._id)
+        if not isinstance(row, dict):
+            raise NotFoundError("Workspace")
+        _info(self._log, "workspace deleted", workspace_id=ws.id)
         return row
 
 
@@ -365,6 +470,98 @@ class Workspace:
         if session_id is None:
             return self._list_sessions(status, limit, offset)
         return self._timeline(session_id, limit, before)
+
+    def delete(self) -> dict[str, Any]:
+        return UserWorkspaces(self._store, self._config, self._log).delete(self.id)
+
+    def nodes(self, parent_id: str | None = None) -> dict[str, Any]:
+        parent = _as_uuid(parent_id) if parent_id else None
+        return self._store.list_nodes(self._id, parent)
+
+    def create_folder(self, name: str, parent_id: str | None = None) -> dict[str, Any]:
+        return self._create_node("folder", name, parent_id)
+
+    def create_file(self, name: str, parent_id: str | None = None) -> dict[str, Any]:
+        return self._create_node("file", name, parent_id)
+
+    def delete_node(self, node_id: str) -> dict[str, Any]:
+        nid = _as_uuid(node_id)
+        node = self._store.get_node(nid)
+        if not isinstance(node, dict) or not _same_uuid(node.get("workspace_id"), self._id):
+            raise NotFoundError("Node")
+        root = workspace_dir(self._store.fs_root, self._store.user_hex, self.id)
+        rel = str(node.get("rel_path") or "")
+        try:
+            remove(root, rel)
+        except FsError as exc:
+            raise WorkspaceError(str(exc), exc.code) from exc
+        row = self._store.delete_node(nid)
+        if not isinstance(row, dict):
+            raise NotFoundError("Node")
+        _info(self._log, "node deleted", workspace_id=self.id, node_id=str(nid))
+        return row
+
+    def _create_node(self, kind: str, name: str, parent_id: str | None) -> dict[str, Any]:
+        clean = safe_name(name)
+        parent = _as_uuid(parent_id) if parent_id else None
+        rel = clean
+        if parent is not None:
+            parent_row = self._store.get_node(parent)
+            if not isinstance(parent_row, dict) or not _same_uuid(
+                parent_row.get("workspace_id"), self._id,
+            ):
+                raise NotFoundError("Folder")
+            rel = f"{parent_row['rel_path']}/{clean}"
+        root = workspace_dir(self._store.fs_root, self._store.user_hex, self.id)
+        ensure_dir(root)
+        try:
+            if kind == "folder":
+                mkdir(root, rel)
+            else:
+                touch(root, rel)
+        except FsError as exc:
+            raise WorkspaceError(str(exc), exc.code) from exc
+        path = root / rel
+        files, size = folder_stats(path) if kind == "folder" else (0, path.stat().st_size)
+        row = self._store.create_node(
+            self._id, parent, kind, clean, rel, size, files if kind == "folder" else 0,
+        )
+        _info(self._log, "node created", workspace_id=self.id, kind=kind)
+        return row
+
+    def delete_session(self, session_id: str) -> dict[str, Any]:
+        sid = self._require_session(session_id)
+        row = self._store.delete_session(sid)
+        if not isinstance(row, dict):
+            raise NotFoundError("Session")
+        _info(self._log, "session deleted", workspace_id=self.id, session_id=str(sid))
+        return row
+
+    def open_session(self, session_id: str) -> dict[str, Any]:
+        return self._flags(session_id, tab_open=True)
+
+    def close_session(self, session_id: str) -> dict[str, Any]:
+        return self._flags(session_id, tab_open=False)
+
+    def set_agent_busy(self, session_id: str, busy: bool) -> dict[str, Any]:
+        return self._flags(session_id, agent_busy=busy)
+
+    def close_all_tabs(self) -> dict[str, Any]:
+        result = self._store.close_all_tabs(self._id)
+        _info(self._log, "tabs closed", workspace_id=self.id)
+        return result
+
+    def _flags(
+        self,
+        session_id: str,
+        tab_open: bool | None = None,
+        agent_busy: bool | None = None,
+    ) -> dict[str, Any]:
+        sid = self._require_session(session_id)
+        row = self._store.set_session_flags(sid, tab_open, agent_busy)
+        if not isinstance(row, dict):
+            raise NotFoundError("Session")
+        return row
 
     def create_session(
         self,
