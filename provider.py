@@ -11,6 +11,7 @@ from core.task_decorator import task
 
 from .facade import NotFoundError, WorkspaceAccessor, WorkspaceError
 from .fs import dir_child_count, folder_stats, join_rel, move_into, rename_path, trash_move
+from .gitinfo import list_repos
 from .homes import ensure_nested, ensure_unix_home, list_home, unix_name
 
 __all__ = ["WorkspaceProvider"]
@@ -235,6 +236,25 @@ class WorkspaceProvider:
             item["inherited"] = cover == "inherited"
             item["excluded"] = cover == "excluded"
         return {"home": home, "items": items}
+
+    @task(
+        type="database",
+        api=True,
+        name="list_git",
+        description="Ветки git для прилинкованных корней workspace",
+        args={"workspace_id": "str"},
+        return_type="dict",
+    )
+    def list_git(
+        self,
+        workspace_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        uid = self._user(_session_user_id)
+        home = self._home(uid)
+        ws = self._ws(uid, workspace_id)
+        roots = sorted(ws.linked_paths()) or [""]
+        return {"items": list_repos(home, roots)}
 
     @task(
         type="database",
