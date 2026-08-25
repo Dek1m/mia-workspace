@@ -10,7 +10,6 @@ from pathlib import Path
 __all__ = [
     "FsError",
     "safe_name",
-    "workspace_dir",
     "ensure_dir",
     "join_rel",
     "mkdir",
@@ -37,16 +36,6 @@ def safe_name(name: str) -> str:
     if not value or value in {".", ".."} or not _NAME.match(value) or ".." in value:
         raise FsError("invalid name", "INVALID_NAME")
     return value
-
-
-def workspace_dir(fs_root: str, user_hex: str, workspace_id: str) -> Path:
-    root = Path(fs_root).resolve()
-    path = (root / user_hex / workspace_id.replace("-", "")).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise FsError("path escape", "PATH_ESCAPE") from exc
-    return path
 
 
 def ensure_dir(path: Path) -> str:

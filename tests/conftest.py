@@ -267,5 +267,5 @@ def accessor(database: FakeDatabase, log: RecordingLog, tmp_path):
     return WorkspaceAccessor(
         database=database,
         log=log,
-        config=WorkspaceConfig(fs_root=str(tmp_path)),
+        config=WorkspaceConfig(home_root=str(tmp_path)),
     )

@@ -23,7 +23,6 @@ from .fs import (
     safe_name,
     touch,
     trash_move,
-    workspace_dir,
 )
 from .schemas import DB_SCHEMA, TEMPLATE_DATABASE, user_dbname, uuid_hex
 
@@ -139,11 +138,10 @@ def _info(log: Any, message: str, **extra: Any) -> None:
 class UserStore:
     """Открытая user-БД: SELECT workspace.* только."""
 
-    def __init__(self, pool: Any, dbname: str, user_hex: str, fs_root: str) -> None:
+    def __init__(self, pool: Any, dbname: str, user_hex: str) -> None:
         self.pool = pool
         self.dbname = dbname
         self.user_hex = user_hex
-        self.fs_root = fs_root
 
     def list_workspaces(self, include_archived: bool, limit: int, offset: int) -> dict[str, Any]:
         row = self._fetch(
@@ -362,7 +360,6 @@ class WorkspaceCatalog:
             pool=pool,
             dbname=dbname,
             user_hex=hex_id,
-            fs_root=self._config.fs_root,
         )
 
     def _ensure(self, dbname: str, user_hex: str) -> None:
@@ -474,9 +471,7 @@ class UserWorkspaces:
     ) -> dict[str, Any]:
         row = self._store.create_workspace(name, description, settings)
         ws_id = str(row.get("id"))
-        root = Path(home) if home else workspace_dir(
-            self._store.fs_root, self._store.user_hex, ws_id,
-        )
+        root = Path(home) if home else Path(self._config.home_root)
         ensure_dir(root)
         updated = self._store.set_workspace_root(uuid.UUID(ws_id), str(root))
         if isinstance(updated, dict):
@@ -559,10 +554,10 @@ class Workspace:
         stored = self._data.get("root_path")
         if stored:
             return Path(str(stored))
-        return workspace_dir(self._store.fs_root, self._store.user_hex, self.id)
+        return Path(self._config.home_root)
 
     def ensure_root(self, home: str) -> None:
-        """Корень диска — ~/ пользователя, не старый workspace_dir."""
+        """Корень диска — ~/ пользователя."""
         target = Path(home).resolve()
         current = self.disk_root()
         try:
