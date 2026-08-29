@@ -555,17 +555,19 @@ class WorkspaceProvider:
         api=True,
         name="create_session",
         description="Создать сессию (вкладка закрыта, агент idle)",
-        args={"workspace_id": "str", "title": "str"},
+        args={"workspace_id": "str", "title": "str", "description": "str"},
         return_type="dict",
     )
     def create_session(
         self,
         workspace_id: str,
         title: str,
+        description: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         ws = self._accessor(user=self._user(_session_user_id), ws=workspace_id)
-        return ws.create_session(title)
+        meta = {"description": description} if description else None
+        return ws.create_session(title, metadata=meta)
 
     @task(
         type="database",
