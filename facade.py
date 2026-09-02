@@ -8,22 +8,11 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .config import WorkspaceConfig
-from .fs import (
-    FsError,
-    ensure_dir,
-    folder_stats,
-    join_rel,
-    mkdir,
-    remove,
-    safe_name,
-    touch,
-    trash_move,
-)
 from .schemas import DB_SCHEMA, TEMPLATE_DATABASE, user_dbname, uuid_hex
 
 __all__ = [
@@ -52,6 +41,50 @@ class NotFoundError(WorkspaceError):
 
 def _norm_rel(rel: str) -> str:
     return rel.strip().lstrip("/").rstrip("/")
+
+
+def _ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _safe_name(name: str) -> str:
+    value = name.strip()
+    if not value or value in {".", ".."} or "/" in value or "\\" in value or ".." in value:
+        raise WorkspaceError("invalid name", "INVALID_NAME")
+    return value
+
+
+def _safe_join(root: Path, rel: str) -> Path:
+    if ".." in rel.strip("/"):
+        raise WorkspaceError("invalid path", "INVALID_NAME")
+    target = (root / rel).resolve() if rel else root.resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError as exc:
+        raise WorkspaceError("path escape", "PATH_ESCAPE") from exc
+    return target
+
+
+def _folder_stats(path: Path) -> tuple[int, int]:
+    files = 0
+    size = 0
+    for child in path.rglob("*"):
+        if child.is_file():
+            files += 1
+            try:
+                size += child.stat().st_size
+            except OSError:
+                pass
+    return files, size
+
+
+def _remove_tree(path: Path) -> None:
+    import shutil
+
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
 
 
 def linked_conflict(rel: str, linked: Any) -> tuple[str, str] | None:
@@ -422,27 +455,33 @@ class WorkspaceCatalog:
 class WorkspaceAccessor:
     """state.workspace — callable фасад."""
 
-    def __init__(self, database: Any, log: Any, config: WorkspaceConfig) -> None:
+    def __init__(
+        self, database: Any, log: Any, config: WorkspaceConfig, fs: Any | None = None,
+    ) -> None:
         self._catalog = WorkspaceCatalog(database, log, config)
         self._config = config
         self._log = log
+        self._fs = fs
 
     def __call__(
         self, *, user: str | Any, ws: str | None = None,
     ) -> UserWorkspaces | Workspace:
         store = self._catalog.open(user)
         if ws is None:
-            return UserWorkspaces(store, self._config, self._log)
-        return Workspace(store, ws, self._config, self._log)
+            return UserWorkspaces(store, self._config, self._log, self._fs)
+        return Workspace(store, ws, self._config, self._log, self._fs)
 
 
 class UserWorkspaces:
     """Пространства пользователя. Product ws — строка, не CREATE DATABASE."""
 
-    def __init__(self, store: UserStore, config: WorkspaceConfig, log: Any) -> None:
+    def __init__(
+        self, store: UserStore, config: WorkspaceConfig, log: Any, fs: Any | None = None,
+    ) -> None:
         self._store = store
         self._config = config
         self._log = log
+        self._fs = fs
 
     def list(
         self,
@@ -472,11 +511,11 @@ class UserWorkspaces:
         row = self._store.create_workspace(name, description, settings)
         ws_id = str(row.get("id"))
         root = Path(home) if home else Path(self._config.home_root)
-        ensure_dir(root)
+        _ensure_dir(root)
         updated = self._store.set_workspace_root(uuid.UUID(ws_id), str(root))
         if isinstance(updated, dict):
             row = updated
-        ws = Workspace(self._store, ws_id, self._config, self._log)
+        ws = Workspace(self._store, ws_id, self._config, self._log, self._fs)
         clean: list[str] = []
         for folder in folders or []:
             rel = _norm_rel(str(folder))
@@ -494,16 +533,22 @@ class UserWorkspaces:
         return row
 
     def delete(self, workspace_id: str) -> dict[str, Any]:
-        ws = Workspace(self._store, workspace_id, self._config, self._log)
+        ws = Workspace(self._store, workspace_id, self._config, self._log, self._fs)
         root = ws.disk_root()
         home_root = Path(self._config.home_root).resolve()
         try:
             root.resolve().relative_to(home_root)
         except ValueError:
-            try:
-                remove(root, "")
-            except FsError:
-                pass
+            if self._fs is not None:
+                try:
+                    self._fs.remove_outside_home(root)
+                except Exception:
+                    pass
+            else:
+                try:
+                    _remove_tree(root)
+                except OSError:
+                    pass
         row = self._store.delete_workspace(ws._id)
         if not isinstance(row, dict):
             raise NotFoundError("Workspace")
@@ -515,12 +560,18 @@ class Workspace:
     """Один продуктовый workspace внутри user-БД."""
 
     def __init__(
-        self, store: UserStore, workspace_id: str, config: WorkspaceConfig, log: Any,
+        self,
+        store: UserStore,
+        workspace_id: str,
+        config: WorkspaceConfig,
+        log: Any,
+        fs: Any | None = None,
     ) -> None:
         self._store = store
         self._id = _as_uuid(workspace_id)
         self._config = config
         self._log = log
+        self._fs = fs
         data = store.get_workspace(self._id)
         if not isinstance(data, dict):
             raise NotFoundError("Workspace")
@@ -565,7 +616,7 @@ class Workspace:
                 return
         except OSError:
             pass
-        ensure_dir(target)
+        _ensure_dir(target)
         updated = self._store.set_workspace_root(self._id, str(target))
         if isinstance(updated, dict):
             self._data = updated
@@ -583,16 +634,16 @@ class Workspace:
             raise WorkspaceError("invalid path", "INVALID_NAME")
         raise_linked_conflict(rel, self.linked_paths())
         root = self.disk_root()
-        ensure_dir(root)
-        path = join_rel(root, rel)
+        _ensure_dir(root)
+        path = _safe_join(root, rel)
         if not path.exists():
             if not create_missing:
                 raise WorkspaceError("path not found", "NOT_FOUND")
-            mkdir(root, rel)
-            path = join_rel(root, rel)
+            path.mkdir(parents=True, exist_ok=True)
+            path = _safe_join(root, rel)
         kind = "folder" if path.is_dir() else "file"
         name = path.name
-        files, size = folder_stats(path) if kind == "folder" else (0, path.stat().st_size)
+        files, size = _folder_stats(path) if kind == "folder" else (0, path.stat().st_size)
         row = self._store.create_node(
             self._id, None, kind, name, rel, size, files if kind == "folder" else 0,
         )
@@ -627,10 +678,7 @@ class Workspace:
         """Перенести в ~/Trash/belle/ и отвязать все ноды под этим путём."""
         rel = rel.strip().lstrip("/")
         root = self.disk_root()
-        try:
-            dest = trash_move(root, rel)
-        except FsError as exc:
-            raise WorkspaceError(str(exc), exc.code) from exc
+        dest = self._trash_on_disk(root, rel)
         removed = self._unlink_prefix(rel)
         _info(self._log, "path trashed", workspace_id=self.id, rel=rel, dest=dest)
         return {"rel_path": rel, "trash_path": dest, "unlinked": removed}
@@ -685,8 +733,17 @@ class Workspace:
                     count += 1
         return count
 
+    def _trash_on_disk(self, root: Path, rel: str) -> str:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dest_rel = f"Trash/belle/{stamp}/{rel}"
+        src = _safe_join(root, rel)
+        dest = _safe_join(root, dest_rel)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dest)
+        return dest_rel
+
     def _create_node(self, kind: str, name: str, parent_id: str | None) -> dict[str, Any]:
-        clean = safe_name(name)
+        clean = _safe_name(name)
         parent = _as_uuid(parent_id) if parent_id else None
         rel = clean
         if parent is not None:
@@ -697,16 +754,14 @@ class Workspace:
                 raise NotFoundError("Folder")
             rel = f"{parent_row['rel_path']}/{clean}"
         root = self.disk_root()
-        ensure_dir(root)
-        try:
-            if kind == "folder":
-                mkdir(root, rel)
-            else:
-                touch(root, rel)
-        except FsError as exc:
-            raise WorkspaceError(str(exc), exc.code) from exc
-        path = root / rel
-        files, size = folder_stats(path) if kind == "folder" else (0, path.stat().st_size)
+        _ensure_dir(root)
+        path = _safe_join(root, rel)
+        if kind == "folder":
+            path.mkdir(parents=True, exist_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(exist_ok=True)
+        files, size = _folder_stats(path) if kind == "folder" else (0, path.stat().st_size)
         row = self._store.create_node(
             self._id, parent, kind, clean, rel, size, files if kind == "folder" else 0,
         )

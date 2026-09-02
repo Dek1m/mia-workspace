@@ -215,6 +215,9 @@ class FakeDatabase:
                 if n["workspace_id"] == str(params[0]) and n.get("parent_id") == parent
             ]
             return {"items": items}
+        if func == "list_all_nodes":
+            items = [n for n in table_nd.values() if n["workspace_id"] == str(params[0])]
+            return {"items": items}
         if func == "get_node":
             return table_nd.get(str(params[0]))
         if func == "delete_node":

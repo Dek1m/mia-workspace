@@ -1,8 +1,6 @@
 """RPC API workspace для albedo. user из cookie → _session_user_id."""
 from __future__ import annotations
 
-import asyncio
-import inspect
 import uuid
 from pathlib import Path
 from typing import Any
@@ -10,9 +8,6 @@ from typing import Any
 from core.task_decorator import task
 
 from .facade import NotFoundError, WorkspaceAccessor, WorkspaceError
-from .fs import dir_child_count, folder_stats, join_rel, move_into, rename_path, trash_move
-from .gitinfo import list_repos
-from .homes import ensure_nested, ensure_unix_home, list_home, unix_name
 
 __all__ = ["WorkspaceProvider"]
 
@@ -27,50 +22,40 @@ def _cover(rel: str, linked: set[str], excluded: set[str]) -> str:
     return "none"
 
 
-def _run_coro(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    from concurrent.futures import ThreadPoolExecutor
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result(timeout=10)
-
-
 class WorkspaceProvider:
     def __init__(
         self,
         accessor: WorkspaceAccessor,
         log: Any | None = None,
         auth: Any | None = None,
+        fs: Any | None = None,
     ) -> None:
         self._accessor = accessor
         self._log = log
         self._auth = auth
+        self._fs = fs
 
     def _user(self, session_user_id: str | None) -> str:
         if not session_user_id:
             raise WorkspaceError("Authentication required", "AUTH_ERROR")
         return session_user_id
 
-    def _unix(self, uid: str) -> str:
-        raw = uid
-        if self._auth is not None:
-            try:
-                fn = inspect.unwrap(self._auth.get_user)
-                if inspect.iscoroutinefunction(fn):
-                    row = _run_coro(fn(self._auth, uid))
-                else:
-                    row = fn(self._auth, uid)
-                if isinstance(row, dict) and row.get("username"):
-                    raw = str(row["username"])
-            except Exception:
-                raw = uid
-        return unix_name(raw)
+    def _disk(self) -> Any:
+        if self._fs is None:
+            raise WorkspaceError("fs module is required", "FS_UNAVAILABLE")
+        return self._fs
+
+    def _fs_call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return getattr(self._disk(), method)(*args, **kwargs)
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if isinstance(code, str) and code:
+                raise WorkspaceError(str(exc), code) from exc
+            raise
 
     def _home(self, uid: str) -> str:
-        return ensure_unix_home(self._unix(uid), self._accessor._config.home_root)
+        return str(self._fs_call("ensure_home", uid)["home"])
 
     def _ws(self, uid: str, workspace_id: str) -> Any:
         home = self._home(uid)
@@ -190,9 +175,7 @@ class WorkspaceProvider:
         return_type="dict",
     )
     def ensure_home(self, _session_user_id: str | None = None) -> dict[str, Any]:
-        uid = self._user(_session_user_id)
-        home = self._home(uid)
-        return {"home": home, "username": self._unix(uid)}
+        return self._fs_call("ensure_home", self._user(_session_user_id))
 
     @task(
         type="database",
@@ -216,12 +199,9 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        home = self._home(uid)
-        items = list_home(
-            home,
-            rel_path or "",
-            include_hidden=include_hidden,
-            include_size=include_size,
+        items = self._fs_call(
+            "list", uid, rel_path or "",
+            include_hidden=include_hidden, include_size=include_size,
         )
         linked: set[str] = set()
         excluded: set[str] = set()
@@ -235,7 +215,7 @@ class WorkspaceProvider:
             item["linked"] = cover == "linked"
             item["inherited"] = cover == "inherited"
             item["excluded"] = cover == "excluded"
-        return {"home": home, "items": items}
+        return {"home": self._fs_call("home_for", uid), "items": items}
 
     @task(
         type="database",
@@ -251,10 +231,9 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        home = self._home(uid)
         ws = self._ws(uid, workspace_id)
         roots = sorted(ws.linked_paths()) or [""]
-        return {"items": list_repos(home, roots)}
+        return {"items": self._fs_call("git_repos", uid, roots)}
 
     @task(
         type="database",
@@ -274,10 +253,9 @@ class WorkspaceProvider:
         if kind not in {"folder", "file"}:
             raise WorkspaceError("invalid kind", "INVALID_NAME")
         uid = self._user(_session_user_id)
-        home = self._home(uid)
         parent = parent_rel.strip().lstrip("/")
         rel = f"{parent}/{name.strip()}" if parent else name.strip()
-        row = ensure_nested(home, rel, kind, self._unix(uid))
+        row = self._fs_call("ensure_nested", uid, rel, kind)
         row["linked"] = False
         return row
 
@@ -303,10 +281,10 @@ class WorkspaceProvider:
                 rel = str(item.get("rel_path") or "")
                 if not rel:
                     continue
-                path = join_rel(home, rel)
+                path = home / rel
                 if not path.exists() or item.get("kind") != "folder":
                     continue
-                files, size = folder_stats(path)
+                files, size = self._fs_call("folder_stats", path)
                 ws._store.touch_folder_stats(uuid.UUID(str(item["id"])), files, size)
                 updated += 1
         return {"home": str(home), "updated": updated}
@@ -326,8 +304,8 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        ws = self._ws(uid, workspace_id)
-        return ws.link_path(rel_path, create_missing=False)
+        self._fs_call("register_shareable_root", uid, rel_path)
+        return self._ws(uid, workspace_id).link_path(rel_path, create_missing=False)
 
     @task(
         type="database",
@@ -344,6 +322,7 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
+        self._fs_call("unregister_shareable_root", uid, rel_path)
         return self._ws(uid, workspace_id).unlink_path(rel_path)
 
     @task(
@@ -361,11 +340,11 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        home = self._home(uid)
+        dest = self._fs_call("trash", uid, rel_path)
+        unlinked = 0
         if workspace_id:
-            return self._ws(uid, workspace_id).trash_path(rel_path)
-        dest = trash_move(Path(home), rel_path)
-        return {"rel_path": rel_path, "trash_path": dest, "unlinked": 0}
+            unlinked = self._ws(uid, workspace_id)._unlink_prefix(rel_path.strip().lstrip("/"))
+        return {"rel_path": rel_path, "trash_path": dest, "unlinked": unlinked}
 
     @task(
         type="database",
@@ -380,14 +359,7 @@ class WorkspaceProvider:
         rel_path: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        uid = self._user(_session_user_id)
-        home = Path(self._home(uid))
-        rel = rel_path.strip().lstrip("/")
-        path = join_rel(home, rel) if rel else home
-        if not path.exists():
-            raise WorkspaceError("path not found", "NOT_FOUND")
-        kind = "folder" if path.is_dir() else "file"
-        return {"rel_path": rel, "kind": kind, "child_count": dir_child_count(path)}
+        return self._fs_call("stat", self._user(_session_user_id), rel_path)
 
     @task(
         type="database",
@@ -405,8 +377,7 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        home = Path(self._home(uid))
-        new_rel = move_into(home, src, dest_dir)
+        new_rel = self._fs_call("move", uid, src, dest_dir)
         rewritten = 0
         if workspace_id:
             rewritten = self._ws(uid, workspace_id).rewrite_after_move(
@@ -430,9 +401,8 @@ class WorkspaceProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         uid = self._user(_session_user_id)
-        home = Path(self._home(uid))
         old = src.strip().lstrip("/")
-        new_rel = rename_path(home, old, new_name)
+        new_rel = self._fs_call("rename", uid, old, new_name)
         rewritten = 0
         if workspace_id:
             rewritten = self._ws(uid, workspace_id).rewrite_after_move(old, new_rel)

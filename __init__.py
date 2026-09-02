@@ -50,7 +50,7 @@ class WorkspaceModule(ModuleBase):
     @property
     def meta(self) -> ModuleMeta:
         return ModuleMeta(
-            dependencies=["log", "db"],
+            dependencies=["log", "db", "fs"],
             cache_rules={},
             timeout_defaults={},
         )
@@ -66,8 +66,9 @@ class WorkspaceModule(ModuleBase):
         from modules.db.provider import DatabaseProvider
 
         database = state.services.resolve(DatabaseProvider)
+        fs = getattr(state, "fs", None)
         accessor = WorkspaceAccessor(
-            database=database, log=self._log, config=self._config,
+            database=database, log=self._log, config=self._config, fs=fs,
         )
         state.workspace = accessor
         auth = None
@@ -77,7 +78,7 @@ class WorkspaceModule(ModuleBase):
             auth = state.services.resolve(AuthProvider)
         except Exception:
             auth = None
-        self._provider = WorkspaceProvider(accessor, self._log, auth)
+        self._provider = WorkspaceProvider(accessor, self._log, auth, fs)
         state.services.register(WorkspaceProvider, self._provider)
         self._register_auth_schema(state)
         self._log.info("WorkspaceModule loaded", extra={"version": self.version})
