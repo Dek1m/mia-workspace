@@ -53,6 +53,10 @@ class WorkspaceModule(ModuleBase):
             dependencies=["log", "db", "fs"],
             cache_rules={},
             timeout_defaults={},
+            load_on="all",
+            is_system=False,
+            display_name="Workspace",
+            is_example=False,
         )
 
     def __init__(self, config: WorkspaceConfig | None = None) -> None:
