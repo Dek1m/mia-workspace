@@ -256,6 +256,20 @@ class UserStore:
             raise WorkspaceError("insert_event returned empty", "DATABASE_ERROR")
         return row
 
+    def delete_events(self, session_id: uuid.UUID, event_ids: list[str]) -> int:
+        if not event_ids:
+            return 0
+        try:
+            with self.pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM workspace.events WHERE session_id = %s AND id = ANY(%s::uuid[])",
+                        (session_id, event_ids),
+                    )
+                    return int(cur.rowcount or 0)
+        except Exception as exc:
+            raise WorkspaceError(str(exc), "DATABASE_ERROR") from exc
+
     def delete_workspace(self, workspace_id: uuid.UUID) -> dict[str, Any] | None:
         return self._fetch("SELECT workspace.delete_workspace(%s)", (workspace_id,))
 
@@ -834,6 +848,23 @@ class Workspace:
             kind=kind,
         )
         return row
+
+    def delete_branch(self, session_id: str, event_id: str) -> dict[str, Any]:
+        session = self._require_session(session_id)
+        timeline = self._store.fetch_timeline(session, None, 500)
+        items = list(timeline.get("items") or [])
+        wanted = {event_id}
+        changed = True
+        while changed:
+            changed = False
+            for item in items:
+                parent = str((item.get("payload") or {}).get("parent_id") or "")
+                ident = str(item.get("id") or "")
+                if ident and parent in wanted and ident not in wanted:
+                    wanted.add(ident)
+                    changed = True
+        deleted = self._store.delete_events(session, list(wanted))
+        return {"deleted": deleted}
 
     def _list_sessions(
         self, status: str | None, limit: int | None, offset: int,

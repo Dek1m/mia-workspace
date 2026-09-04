@@ -653,6 +653,7 @@ class WorkspaceProvider:
             "content": "str",
             "agent_name": "str",
             "model_name": "str",
+            "parent_id": "str",
         },
         return_type="dict",
     )
@@ -664,6 +665,7 @@ class WorkspaceProvider:
         content: str,
         agent_name: str | None = None,
         model_name: str | None = None,
+        parent_id: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         ws = self._accessor(user=self._user(_session_user_id), ws=workspace_id)
@@ -672,4 +674,24 @@ class WorkspaceProvider:
             payload["agent_name"] = agent_name
         if model_name:
             payload["model_name"] = model_name
+        if parent_id:
+            payload["parent_id"] = parent_id
         return ws.insert_event(session_id, "message", role=role, content=content, payload=payload or None)
+
+    @task(
+        type="database",
+        api=True,
+        name="delete_branch",
+        description="Удалить ветку сообщения и всех потомков",
+        args={"workspace_id": "str", "session_id": "str", "event_id": "str"},
+        return_type="dict",
+    )
+    def delete_branch(
+        self,
+        workspace_id: str,
+        session_id: str,
+        event_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        ws = self._accessor(user=self._user(_session_user_id), ws=workspace_id)
+        return ws.delete_branch(session_id, event_id)
