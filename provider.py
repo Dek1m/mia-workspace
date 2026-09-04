@@ -646,7 +646,14 @@ class WorkspaceProvider:
         api=True,
         name="post_message",
         description="Сообщение user|assistant. UUID пишет БД",
-        args={"workspace_id": "str", "session_id": "str", "role": "str", "content": "str"},
+        args={
+            "workspace_id": "str",
+            "session_id": "str",
+            "role": "str",
+            "content": "str",
+            "agent_name": "str",
+            "model_name": "str",
+        },
         return_type="dict",
     )
     def post_message(
@@ -655,7 +662,14 @@ class WorkspaceProvider:
         session_id: str,
         role: str,
         content: str,
+        agent_name: str | None = None,
+        model_name: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         ws = self._accessor(user=self._user(_session_user_id), ws=workspace_id)
-        return ws.insert_event(session_id, "message", role=role, content=content)
+        payload: dict[str, Any] = {}
+        if agent_name:
+            payload["agent_name"] = agent_name
+        if model_name:
+            payload["model_name"] = model_name
+        return ws.insert_event(session_id, "message", role=role, content=content, payload=payload or None)
