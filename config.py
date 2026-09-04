@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import ClassVar
+
+from modules_system.pref_spec import PrefField
 
 __all__ = ["WorkspaceConfig"]
 
@@ -23,6 +26,33 @@ class WorkspaceConfig:
     template_database: str = "template_workspace"
     # Unix home: {home_root}/{login}/ — корень дерева папок в UI
     home_root: str = "/home"
+
+    SETTINGS: ClassVar[tuple[PrefField, ...]] = (
+        PrefField(
+            "default_page_size", "Default page size",
+            "Размер страницы списков workspace.",
+            "int", 50, "Limits", env="WORKSPACE_DEFAULT_PAGE_SIZE",
+            minimum=1, maximum=500,
+        ),
+        PrefField(
+            "max_page_size", "Max page size",
+            "Потолок page size.",
+            "int", 200, "Limits", env="WORKSPACE_MAX_PAGE_SIZE",
+            minimum=1, maximum=2000,
+        ),
+        PrefField(
+            "template_database", "Template database",
+            "TEMPLATE для CREATE DATABASE user-БД. Пусто — без шаблона.",
+            "string", "template_workspace", "Storage",
+            env="WORKSPACE_TEMPLATE_DATABASE", target="env", needs_restart=True,
+        ),
+        PrefField(
+            "home_root", "Home root",
+            "Корень unix-home: {home_root}/{login}/.",
+            "string", "/home", "Storage", env="WORKSPACE_HOME_ROOT",
+            target="compose", needs_restart=True,
+        ),
+    )
 
     @classmethod
     def from_env(cls) -> WorkspaceConfig:
