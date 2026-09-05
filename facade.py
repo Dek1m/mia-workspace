@@ -168,6 +168,12 @@ def _info(log: Any, message: str, **extra: Any) -> None:
     log.info(message, extra=extra)
 
 
+def _debug(log: Any, message: str, **extra: Any) -> None:
+    if log is None:
+        return
+    log.debug(message, extra=extra)
+
+
 class UserStore:
     """Открытая user-БД: SELECT workspace.* только."""
 
@@ -841,8 +847,9 @@ class Workspace:
     ) -> dict[str, Any]:
         session = self._require_session(session_id)
         row = self._store.insert_event(session, kind, role, content, payload)
-        _info(
-            self._log, "event inserted",
+        # Горячий путь ленты (каждый токен стрима) — DEBUG, не INFO
+        _debug(
+            self._log, "workspace_event_inserted",
             workspace_id=str(self._id),
             session_id=str(session),
             kind=kind,
@@ -871,8 +878,9 @@ class Workspace:
     ) -> dict[str, Any]:
         page = _page(limit, self._config.default_page_size, self._config.max_page_size)
         result = self._store.list_sessions(self._id, status, page, offset)
-        _info(
-            self._log, "sessions listed",
+        # Поллинг SPA — DEBUG, не INFO
+        _debug(
+            self._log, "workspace_sessions_listed",
             workspace_id=str(self._id),
             total=result.get("total"),
             limit=result.get("limit"),
@@ -886,8 +894,9 @@ class Workspace:
         session = self._require_session(session_id)
         page = _page(limit, 100, self._config.max_page_size)
         result = self._store.fetch_timeline(session, before, page)
-        _info(
-            self._log, "timeline fetched",
+        # Поллинг SPA — DEBUG, не INFO
+        _debug(
+            self._log, "workspace_timeline_fetched",
             workspace_id=str(self._id),
             session_id=str(session),
             limit=result.get("limit"),

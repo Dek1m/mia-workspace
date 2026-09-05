@@ -101,8 +101,9 @@ def test_workspace_object_and_sessions(
     listed = ws.sessions()
     assert session["title"] == "Debug"
     assert listed["total"] == 1
-    extras = [extra for _, msg, extra in log.records if msg == "sessions listed"]
-    assert extras and "items" not in extras[0]
+    records = [rec for rec in log.records if rec[1] == "workspace_sessions_listed"]
+    assert records and "items" not in records[0][2]
+    assert all(level == "debug" for level, _, _ in records)
 
 
 def test_sessions_timeline_does_not_log_content(
@@ -114,11 +115,12 @@ def test_sessions_timeline_does_not_log_content(
     ws.insert_event(SESSION_UUID, "message", role="user", content="secret-body")
     timeline = ws.sessions(SESSION_UUID)
     assert timeline["items"][0]["content"] == "secret-body"
-    extras = [extra for _, msg, extra in log.records if msg == "timeline fetched"]
-    assert extras
-    blob = str(extras[0])
+    records = [rec for rec in log.records if rec[1] == "workspace_timeline_fetched"]
+    assert records
+    assert all(level == "debug" for level, _, _ in records)
+    blob = str(records[0][2])
     assert "secret-body" not in blob
-    assert "items" not in extras[0]
+    assert "items" not in records[0][2]
 
 
 def test_folder_on_disk_and_session_tabs(
